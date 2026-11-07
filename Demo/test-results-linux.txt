@@ -1,0 +1,77 @@
+Loaded: NAJI DISTORTION | Naji Audio | Fx|Distortion | v1.0.0 | ins 0 outs 0
+Parameters: [Drive = 35%] [Tone = 50%] [Crush = 0%] [Mix = 100%] [Output = 0.0 dB] [Type = Soft] [Bypass = Off]
+Reported latency: 65 samples (1.35 ms @48k)
+
+[1] Output RMS (dBFS) on guitar riff, input RMS -20.7 dBFS, tone 50, mix 100
+    mode      drive:   0     35     70    100   | crush 50 @ drive 70 | crush 100 @ drive 70
+    Soft            -22.4  -20.2  -18.2  -16.4   |    -17.2          |    -16.7        
+    Hard            -22.4  -20.1  -18.2  -16.4   |    -17.2          |    -16.8        
+    Fuzz            -22.4  -20.2  -18.2  -16.4   |    -17.1          |    -16.4        
+    Digital         -22.4  -20.2  -18.2  -16.4   |    -16.2          |    -15.5        
+
+[1b] Drive sweep 0..100 step 10 (RMS dBFS, tone 50)
+    Soft      -22.4  -21.8  -21.2  -20.6  -20.0  -19.4  -18.8  -18.2  -17.6  -17.0  -16.4
+    Hard      -22.4  -21.8  -21.2  -20.6  -20.0  -19.4  -18.8  -18.2  -17.6  -17.0  -16.4
+    Fuzz      -22.4  -21.8  -21.2  -20.6  -20.0  -19.4  -18.8  -18.2  -17.6  -17.0  -16.4
+    Digital   -22.4  -21.8  -21.2  -20.6  -20.0  -19.4  -18.8  -18.2  -17.6  -17.0  -16.4
+
+[2] Control checks
+    DRIVE  centroid (Hz) at 0/35/70/100: 220.032 450.877 1882.9 4372.06
+    TONE   centroid (Hz) at 0/25/50/75/100: 900.541 1944.66 3846.49 7672.29 8019.01
+    CRUSH  difference vs crush 0 (dB) at 10/50/100: -33.9 -19.0 -16.7
+    MIX    0% vs dry input (latency aligned) max error: -200 dB
+    MIX    50% RMS -20.4 dBFS
+    OUTPUT -24 dB -> measured -24.00 dB
+    OUTPUT -6 dB -> measured -6.00 dB
+    OUTPUT 6 dB -> measured 6.00 dB
+    OUTPUT 12 dB -> measured 12.00 dB
+    TYPE   all 4 modes produce distinct output
+
+[3] Click test (110 Hz sine, abrupt automation jumps; ratio = worst step during change / worst steady step, <= 1.25 passes)
+    Drive 0 -> 100         ratio 1.000  ok
+    Drive 100 -> 0         ratio 0.966  ok
+    Tone 0 -> 100          ratio 1.000  ok
+    Crush 0 -> 100         ratio 1.000  ok
+    Mix 0 -> 100           ratio 1.000  ok
+    Output -24 -> +12      ratio 1.000  ok
+    Type Soft -> Hard      ratio 0.994  ok
+    Type Hard -> Fuzz      ratio 1.000  ok
+    Type Fuzz -> Digital   ratio 0.967  ok
+    Type Digital -> Soft   ratio 0.985  ok
+
+[4] Bypass
+    bypassed vs dry (latency aligned) max error: -200 dB
+
+[5] Sample rates / block sizes
+     44100 Hz  latency 65  all modes finite: yes  block-size independence max diff: -200 dB
+     48000 Hz  latency 65  all modes finite: yes  block-size independence max diff: -200 dB
+     88200 Hz  latency 61  all modes finite: yes  block-size independence max diff: -200 dB
+     96000 Hz  latency 61  all modes finite: yes  block-size independence max diff: -200 dB
+    192000 Hz  latency 49  all modes finite: yes  block-size independence max diff: -200 dB
+
+[6] Aliasing (4987 Hz sine, energy off the harmonic series vs on it; lower is cleaner)
+    Soft     drive 70: -62.0 dB
+    Hard     drive 70: -61.8 dB
+    Fuzz     drive 70: -61.8 dB
+    Digital  drive 70: -59.0 dB
+
+[7] State
+    restored: 77% 23% 41% 66% -5.0 dB Fuzz
+
+[8] CPU (stereo, 512-sample blocks, % of one core in real time)
+    48 kHz:  Soft 3.19%  Hard 2.40%  Fuzz 4.04%  Digital 4.12%
+    96 kHz:  Soft 3.48%  Hard 2.75%  Fuzz 4.38%  Digital 4.48%
+
+[9] Rendering demo WAVs
+    01_soft_warm.wav
+    02_soft_driven.wav
+    03_hard_aggressive.wav
+    04_fuzz_maxed.wav
+    05_digital_folded.wav
+    06_ridiculous.wav
+    07_hard_crush_mix50.wav
+
+[10] Editor snapshots
+    editor_default.png, editor_pushed.png
+
+94/94 checks passed

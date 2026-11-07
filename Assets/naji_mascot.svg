@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 260" width="220" height="260">
+  <!-- NAJI mascot: curly hair, thick black glasses, side-eye glance -->
+
+  <!-- torso / black tee -->
+  <path d="M26 260 C28 222 58 202 110 199 C162 202 192 222 194 260 Z" fill="#17171a" stroke="#2c2c31" stroke-width="2"/>
+  <!-- neck -->
+  <path d="M93 166 L127 166 L129 201 Q110 212 91 201 Z" fill="#bd8a6d"/>
+  <!-- red crew-neck accent -->
+  <path d="M88 200 Q110 216 132 200" fill="none" stroke="#e0262b" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- hair, back mass -->
+  <g fill="#161212" stroke="#33292a" stroke-width="2">
+    <ellipse cx="110" cy="86" rx="58" ry="44"/>
+    <circle cx="57" cy="104" r="13"/>
+    <circle cx="55" cy="84" r="15"/>
+    <circle cx="64" cy="63" r="16"/>
+    <circle cx="82" cy="48" r="17"/>
+    <circle cx="105" cy="41" r="18"/>
+    <circle cx="129" cy="44" r="17"/>
+    <circle cx="149" cy="56" r="16"/>
+    <circle cx="162" cy="76" r="15"/>
+    <circle cx="164" cy="98" r="13"/>
+    <circle cx="160" cy="114" r="9"/>
+    <circle cx="60" cy="118" r="9"/>
+  </g>
+
+  <!-- ears -->
+  <ellipse cx="67" cy="130" rx="9" ry="13" fill="#d2a083"/>
+  <ellipse cx="153" cy="130" rx="9" ry="13" fill="#d2a083"/>
+  <path d="M66 124 Q71 130 67 137" fill="none" stroke="#b07f63" stroke-width="2" stroke-linecap="round"/>
+  <path d="M154 124 Q149 130 153 137" fill="none" stroke="#b07f63" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- face -->
+  <path d="M68 108 C68 76 152 76 152 108 L151 138 C148 166 131 182 110 182 C89 182 72 166 69 138 Z" fill="#d8a688"/>
+  <!-- jaw shade -->
+  <path d="M74 150 C80 170 96 180 110 180 C124 180 140 170 146 150 C138 166 124 173 110 173 C96 173 82 166 74 150 Z" fill="#c49174"/>
+
+  <!-- fringe curls (in front of forehead) -->
+  <g fill="#161212" stroke="#33292a" stroke-width="2">
+    <circle cx="73" cy="90" r="12"/>
+    <circle cx="87" cy="82" r="13"/>
+    <circle cx="102" cy="86" r="12"/>
+    <circle cx="117" cy="80" r="13"/>
+    <circle cx="132" cy="85" r="12"/>
+    <circle cx="146" cy="91" r="11"/>
+    <circle cx="94" cy="95" r="7"/>
+    <circle cx="125" cy="94" r="7"/>
+    <circle cx="80" cy="99" r="6"/>
+    <circle cx="140" cy="100" r="6"/>
+  </g>
+  <!-- curl highlights -->
+  <g fill="none" stroke="#3b312e" stroke-width="2" stroke-linecap="round">
+    <path d="M80 77 Q86 72 93 75"/>
+    <path d="M110 75 Q117 70 123 73"/>
+    <path d="M97 36 Q104 31 112 34"/>
+    <path d="M73 46 Q79 40 87 42"/>
+    <path d="M140 49 Q147 46 154 50"/>
+    <path d="M126 80 Q132 76 138 79"/>
+    <path d="M51 79 Q55 73 61 73"/>
+    <path d="M157 70 Q163 69 167 74"/>
+  </g>
+
+  <!-- eyebrows -->
+  <path d="M79 109 Q90 103 101 107" fill="none" stroke="#161212" stroke-width="5" stroke-linecap="round"/>
+  <path d="M119 107 Q130 103 141 109" fill="none" stroke="#161212" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- eyes glancing to the side -->
+  <ellipse cx="85" cy="125" rx="3.6" ry="4.2" fill="#1a1312"/>
+  <ellipse cx="125" cy="125" rx="3.6" ry="4.2" fill="#1a1312"/>
+
+  <!-- thick black glasses -->
+  <g fill="none" stroke="#070707" stroke-width="5" stroke-linejoin="round">
+    <rect x="73" y="112" width="34" height="25" rx="5" fill="#ffffff" fill-opacity="0.07"/>
+    <rect x="113" y="112" width="34" height="25" rx="5" fill="#ffffff" fill-opacity="0.07"/>
+  </g>
+  <path d="M107 121 Q110 117.5 113 121" fill="none" stroke="#070707" stroke-width="4"/>
+  <path d="M73 118 L64 121" fill="none" stroke="#070707" stroke-width="4" stroke-linecap="round"/>
+  <path d="M147 118 L156 121" fill="none" stroke="#070707" stroke-width="4" stroke-linecap="round"/>
+  <!-- lens glints -->
+  <path d="M93 117 L100 117" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round"/>
+  <path d="M133 117 L140 117" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- nose -->
+  <path d="M111 129 Q108 141 104 146 Q109 150 115 147" fill="none" stroke="#b07f63" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- mouth: flat, unimpressed -->
+  <path d="M100 161 Q110 163.5 120 160.5" fill="none" stroke="#8a4f3f" stroke-width="3" stroke-linecap="round"/>
+</svg>

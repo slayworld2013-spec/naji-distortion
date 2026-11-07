@@ -1,0 +1,41 @@
+name: Build NAJI DISTORTION (Windows VST3)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (downloads JUCE automatically)
+        run: cmake -S . -B build -A x64 -DNAJI_BUILD_TESTS=ON
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target NajiDistortion_VST3 --parallel
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: NAJI-DISTORTION-VST3-Windows-x64
+          path: build/NajiDistortion_artefacts/Release/VST3/
+
+      - name: Build test host
+        run: cmake --build build --config Release --target NajiTestHost --parallel
+
+      - name: Run tests on Windows
+        shell: pwsh
+        run: |
+          & "build/NajiTestHost_artefacts/Release/NajiTestHost.exe" "build/NajiDistortion_artefacts/Release/VST3/NAJI DISTORTION.vst3" test-output | Tee-Object -FilePath test-output-log.txt
+          exit $LASTEXITCODE
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-output-log.txt
+            test-output/
