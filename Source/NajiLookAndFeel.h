@@ -19,6 +19,7 @@ namespace naji::ui
         inline const juce::Colour textDim     { 0xff8d8d94 };
         inline const juce::Colour textFaint   { 0xff5a5a61 };
         inline const juce::Colour red         { 0xffe0262b };
+        inline const juce::Colour hot         { 0xffff3b1f };
     }
 
     class LookAndFeel final : public juce::LookAndFeel_V4

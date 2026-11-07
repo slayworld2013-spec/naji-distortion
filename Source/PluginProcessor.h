@@ -11,6 +11,8 @@ namespace ParamIDs
     inline constexpr const char* mix    = "mix";
     inline constexpr const char* output = "output";
     inline constexpr const char* type   = "type";
+    inline constexpr const char* alias  = "alias";
+    inline constexpr const char* unhinged = "unhinged";
 }
 
 class NajiDistortionProcessor final : public juce::AudioProcessor
@@ -48,6 +50,11 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // Smoothed output level (0..1-ish), read by the editor to animate the photos.
+    std::atomic<float> outputLevel { 0.0f };
+    // Current auto-gain amount in dB (negative = turned down), shown in the footer.
+    std::atomic<float> autoGainDb { 0.0f };
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 private:
@@ -61,6 +68,8 @@ private:
     std::atomic<float>* mix    = nullptr;
     std::atomic<float>* output = nullptr;
     std::atomic<float>* type   = nullptr;
+    std::atomic<float>* alias  = nullptr;
+    std::atomic<float>* unhinged = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NajiDistortionProcessor)
 };

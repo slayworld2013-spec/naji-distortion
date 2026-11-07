@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(NAJI_DISTORTION VERSION 1.0.0 LANGUAGES C CXX)
+project(NAJI_DISTORTION VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,7 +50,11 @@ juce_add_plugin(NajiDistortion
 
 juce_add_binary_data(NajiDistortionAssets
     SOURCES
-        Assets/naji_mascot.svg
+        Assets/Photos/photo1.jpg
+        Assets/Photos/photo2.jpg
+        Assets/Photos/photo3.jpg
+        Assets/Photos/photo4.jpg
+        Assets/Photos/photo5.jpg
         Assets/Fonts/Inter-Bold.otf
         Assets/Fonts/Inter-Medium.otf)
 

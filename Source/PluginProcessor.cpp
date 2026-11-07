@@ -32,6 +32,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout NajiDistortionProcessor::cre
     layout.add (pct (ParamIDs::tone,  "Tone",  50.0f));
     layout.add (pct (ParamIDs::crush, "Crush", 0.0f));
     layout.add (pct (ParamIDs::mix,   "Mix",   100.0f));
+    layout.add (pct (ParamIDs::alias, "Alias", 0.0f));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { ParamIDs::output, 1 }, "Output",
@@ -42,7 +43,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout NajiDistortionProcessor::cre
 
     layout.add (std::make_unique<AudioParameterChoice> (
         ParameterID { ParamIDs::type, 1 }, "Type",
-        StringArray { "Soft", "Hard", "Fuzz", "Digital" }, 0));
+        StringArray { "Soft", "Hard", "Fuzz", "Digital", "Octave", "Melt", "Glitch", "Nuke" }, 0));
+
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { ParamIDs::unhinged, 1 }, "Unhinged", false));
 
     return layout;
 }
@@ -59,6 +63,8 @@ NajiDistortionProcessor::NajiDistortionProcessor()
     mix    = apvts.getRawParameterValue (ParamIDs::mix);
     output = apvts.getRawParameterValue (ParamIDs::output);
     type   = apvts.getRawParameterValue (ParamIDs::type);
+    alias  = apvts.getRawParameterValue (ParamIDs::alias);
+    unhinged = apvts.getRawParameterValue (ParamIDs::unhinged);
 }
 
 bool NajiDistortionProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -78,6 +84,8 @@ naji::DistortionEngine::Settings NajiDistortionProcessor::readSettings() const
     s.mix   = mix->load()   * 0.01f;
     s.outDb = output->load();
     s.mode  = juce::roundToInt (type->load());
+    s.alias = alias->load() * 0.01f;
+    s.unhinged = unhinged->load() > 0.5f;
     return s;
 }
 
@@ -97,11 +105,20 @@ void NajiDistortionProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     engine.setSettings (readSettings());
     engine.process (buffer);
+
+    autoGainDb.store (engine.getAutoGainDb(), std::memory_order_relaxed);
+
+    float peak = 0.0f;
+    for (int c = 0; c < buffer.getNumChannels(); ++c)
+        peak = juce::jmax (peak, buffer.getMagnitude (c, 0, buffer.getNumSamples()));
+    const float prev = outputLevel.load (std::memory_order_relaxed);
+    outputLevel.store (peak > prev ? peak : prev * 0.85f + peak * 0.15f, std::memory_order_relaxed);
 }
 
 void NajiDistortionProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     engine.processBypassed (buffer);
+    outputLevel.store (0.0f, std::memory_order_relaxed);
 }
 
 void NajiDistortionProcessor::getStateInformation (juce::MemoryBlock& destData)
