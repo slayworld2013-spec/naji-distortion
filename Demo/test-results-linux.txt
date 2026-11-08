@@ -1,123 +1,125 @@
-Loaded: NAJI DISTORTION | Naji Audio | Fx|Distortion | v2.0.0 | ins 0 outs 0
-Parameters: [Drive = 35%] [Tone = 50%] [Crush = 0%] [Mix = 100%] [Alias = 0%] [Output = 0.0 dB] [Type = Soft] [Unhinged = Off] [Bypass = Off]
-Reported latency: 65 samples (1.35 ms @48k)
+Loaded: NAJI DISTORTION | Naji Audio | Fx|Distortion | v3.0.0
 
-[1] Output RMS (dBFS) on guitar riff, input RMS -20.7 dBFS, tone 50, mix 100
-    mode      drive:   0     35     70    100   | crush 50 @ drive 70 | crush 100 @ drive 70
-    Soft            -20.8  -20.9  -20.8  -20.7   |    -20.9          |    -20.9        
-    Hard            -20.8  -20.8  -20.8  -20.7   |    -20.9          |    -20.9        
-    Fuzz            -20.8  -20.9  -20.8  -20.7   |    -20.9          |    -20.9        
-    Digital         -20.8  -20.9  -19.7  -20.7   |    -20.5          |    -20.5        
-    Octave          -20.9  -20.9  -20.6  -20.5   |    -20.8          |    -20.9        
-    Melt            -20.8  -20.9  -20.8  -20.7   |    -20.9          |    -20.9        
-    Glitch          -20.8  -20.9  -20.8  -20.7   |    -20.9          |    -20.9        
-    Nuke            -20.1  -20.9  -20.7  -20.7   |    -20.9          |    -20.9        
+[0] Parameters and programs
+    100 parameters, 0 missing in the VST3
+    programs: 18, names exact
+    latency 65 samples
 
-[1b] Drive sweep 0..100 step 10 (RMS dBFS, tone 50; input is -20.7)
-    Soft          -20.8  -20.8  -20.8  -20.9  -20.9  -21.0  -20.9  -20.8  -20.8  -20.8  -20.7
-    Hard          -20.8  -20.8  -20.8  -20.8  -20.9  -21.0  -20.9  -20.8  -20.8  -20.7  -20.7
-    Fuzz          -20.8  -20.8  -20.9  -20.9  -20.9  -20.9  -20.8  -20.8  -20.8  -20.7  -20.7
-    Digital       -20.8  -20.8  -20.8  -20.8  -20.9  -21.0  -20.5  -19.7  -20.6  -20.9  -20.7
-    Octave        -20.9  -20.9  -20.9  -20.9  -20.9  -20.8  -20.7  -20.6  -20.6  -20.6  -20.5
-    Melt          -20.8  -20.9  -21.0  -20.9  -20.9  -20.9  -20.9  -20.8  -20.8  -20.8  -20.7
-    Glitch        -20.8  -20.8  -20.8  -20.9  -21.0  -20.9  -20.8  -20.8  -20.7  -20.7  -20.7
-    Nuke          -20.1  -20.4  -20.8  -20.9  -20.9  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7
-    Soft+UNH      -20.9  -20.9  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Hard+UNH      -20.9  -20.9  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Fuzz+UNH      -20.9  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Digital+UNH   -20.9  -20.8  -20.3  -20.4  -20.0  -20.5  -20.8  -20.8  -20.6  -20.5  -20.5
-    Octave+UNH    -20.9  -20.9  -20.8  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Melt+UNH      -20.9  -20.8  -20.8  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Glitch+UNH    -20.9  -20.9  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
-    Nuke+UNH      -20.3  -20.8  -20.8  -20.8  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7  -20.7
+[1] Effect DSP checks (drive 0, slot A only)
+    OCTAVE   down: 110 Hz vs 220 Hz 37.3 dB | up: 440 vs 220 131.2 dB | sub: 110 vs 220 49.6 dB
+    FSHIFT   +300 Hz -> peak 1300.8 Hz (upper vs lower sideband 49.8 dB) | -300 Hz -> peak 698.7 Hz
+    RING     300 Hz carrier on 1 kHz: sidebands vs carrier-input 109.7 dB
+    WARP     bend +12 st: 1 kHz -> 1999.5 Hz
+    MELT     energy moved off 1 kHz by pitch wobble: 93.6%
+    FORMANT  'A' F1 band +26.4 dB vs 'I'; 'I' F2 band +16.8 dB vs 'A'; shift +12: F1 peak 764.648 -> 1647.95 Hz
+    ROBOT    noise -> 100 Hz harmonic series: on-harmonic vs between 12.4 dB
+    SPECTRAL tail 0.6-1.6 s after the input stops: freeze 100 -26.4 dBFS, freeze 0 -200.0 dBFS
+    TIME     rising chirp, share of steps where pitch goes DOWN: dry 3.01508%, reverse 38.6935% (up 3.51759%), glitch 18.3246%, granular 30.8081%
+    VINYL    crackle clicks in 2 s: 69 | age centroid 8721.21 -> 2891.57 Hz
+    DESTROY  harmonics vs fundamental -0.2 dB
+    FUZZ     harmonics vs fundamental -9.2 dB
 
-[1c] Worst case: drive 100, UNHINGED, tone 100, crush 100, alias 100 (RMS dBFS / peak dBFS)
-    Soft      -20.8 / -3.0
-    Hard      -20.9 / -4.1
-    Fuzz      -20.9 / -3.9
-    Digital   -20.8 / -1.2
-    Octave    -20.8 / -3.8
-    Melt      -20.8 / -4.3
-    Glitch    -20.9 / -3.3
-    Nuke      -20.9 / -3.8
+[2] Distinctness: time-frequency fingerprint distance (mean |dB|) on the riff, effects at defaults
+    GLITCH      vs dry   5.5 dB   level -21.2 dBFS (input -20.7)
+    MELT        vs dry   6.1 dB   level -21.2 dBFS (input -20.7)
+    OCTAVE      vs dry   5.2 dB   level -21.2 dBFS (input -20.7)
+    FORMANT     vs dry  10.9 dB   level -21.9 dBFS (input -20.7)
+    DESTROY     vs dry   3.7 dB   level -22.2 dBFS (input -20.7)
+    WARP        vs dry   5.6 dB   level -21.7 dBFS (input -20.7)
+    ROBOT       vs dry   3.9 dB   level -21.5 dBFS (input -20.7)
+    VINYL       vs dry   3.2 dB   level -21.4 dBFS (input -20.7)
+    RING        vs dry   4.7 dB   level -21.1 dBFS (input -20.7)
+    FUZZ        vs dry   3.5 dB   level -22.2 dBFS (input -20.7)
+    GRANULAR    vs dry  15.4 dB   level -21.6 dBFS (input -20.7)
+    SPECTRAL    vs dry   5.3 dB   level -21.1 dBFS (input -20.7)
+    FREQ SHIFT  vs dry   5.8 dB   level -21.1 dBFS (input -20.7)
+    REVERSE     vs dry   7.4 dB   level -21.6 dBFS (input -20.7)
+    closest pair: DESTROY / FUZZ at 2.8 dB (all 91 pairs checked)
 
-[2] Control checks
-    DRIVE  centroid (Hz) at 0/35/70/100: 220.035 450.858 1882.35 4372.16
-    TONE   centroid (Hz) at 0/25/50/75/100: 922.07 1996.83 3940.2 7801.26 8141.63
-    CRUSH  difference vs crush 0 (dB) at 10/50/100: -33.8 -20.1 -18.4
-    MIX    0% vs dry input (latency aligned) max error: -200 dB
-    MIX    50% RMS -22.0 dBFS
-    OUTPUT -24 dB -> measured -24.00 dB
-    OUTPUT -6 dB -> measured -6.00 dB
-    OUTPUT 6 dB -> measured 6.00 dB
-    OUTPUT 12 dB -> measured 12.00 dB
-    TYPE   all 8 modes produce distinct output
-    UNHINGED centroid (Hz) off/on: 812.161 4812.41
-    ALIAS  inharmonic energy (dB) at 0/25/50/100: -62.0 -4.6 11.1 32.3
+[3] Each effect's own Mix/Blend at 0 leaves the signal untouched
+    worst difference: -200.0 dBFS
 
-[3] Click test (110 Hz sine, abrupt automation jumps; ratio = worst step during change / worst steady step, <= 1.25 passes)
-    Drive 0 -> 100         ratio 0.598  ok
-    Drive 100 -> 0         ratio 0.988  ok
-    Tone 0 -> 100          ratio 1.024  ok
-    Crush 0 -> 100         ratio 1.074  ok
-    Mix 0 -> 100           ratio 1.012  ok
-    Output -24 -> +12      ratio 0.993  ok
-    Type Soft -> Hard      ratio 1.002  ok
-    Type Hard -> Fuzz      ratio 0.999  ok
-    Type Fuzz -> Digital   ratio 0.982  ok
-    Type Digital -> Soft   ratio 0.966  ok
-    Type Soft -> Octave    ratio 0.973  ok
-    Type Octave -> Melt    ratio 1.179  ok
-    Type Melt -> Glitch    ratio 0.940  ok
-    Type Glitch -> Nuke    ratio 0.994  ok
-    Type Nuke -> Soft      ratio 0.711  ok
-    Alias 0 -> 100         ratio 0.672  ok
-    Unhinged off -> on     ratio 0.937  ok
-    Unhinged on -> off     ratio 0.972  ok
+[4] Factory presets: recall, level, distinctness
+     1 Payday 2                          RING       -> DESTROY     RMS -22.2  peak -9.3  recall ok
+     2 Dollar Store Cappucino Assassino  MELT       -> VINYL       RMS -21.7  peak -11.2  recall ok
+     3 Gummy808s                         OCTAVE     -> FUZZ        RMS -22.4  peak -14.8  recall ok
+     4 Jacob                             FORMANT    -> GRANULAR    RMS -22.0  peak -6.7  recall ok
+     5 Nineslay                          DESTROY    -> GLITCH      RMS -22.6  peak -9.1  recall ok
+     6 Raheem                            WARP       -> SPECTRAL    RMS -22.5  peak -6.0  recall ok
+     7 Recqn                             GLITCH     -> REVERSE     RMS -21.6  peak -7.8  recall ok
+     8 Liam                              SPECTRAL   -> FORMANT     RMS -21.5  peak -6.9  recall ok
+     9 Housprty                          FREQ SHIFT -> GLITCH      RMS -22.1  peak -8.3  recall ok
+    10 Raheem. Yshaouzi                  GRANULAR   -> RING        RMS -21.5  peak -1.6  recall ok
+    11 Danzie                            WARP       -> FREQ SHIFT  RMS -21.2  peak -4.2  recall ok
+    12 Yusuf                             REVERSE    -> SPECTRAL    RMS -21.8  peak -4.4  recall ok
+    13 Fuquad                            FREQ SHIFT -> ROBOT       RMS -22.7  peak -3.3  recall ok
+    14 Anime Gamer                       WARP       -> FORMANT     RMS -21.2  peak -5.2  recall ok
+    15 Dicks Sporting Goods              FUZZ       -> RING        RMS -22.5  peak -11.0  recall ok
+    16 Fortnite                          GLITCH     -> DESTROY     RMS -22.0  peak -12.2  recall ok
+    17 Pirate Shop Token                 WARP       -> FUZZ        RMS -22.5  peak -11.3  recall ok
+    18 Boolymon                          MELT       -> FORMANT     RMS -21.9  peak -5.6  recall ok
+    18 distinct slot combinations; closest presets: Raheem. Yshaouzi / Fuquad at 4.3 dB (153 pairs)
 
-[4] Bypass
-    bypassed vs dry (latency aligned) max error: -200 dB
+[5] Click test (110 Hz sine; clicks are broadband, so the output is high-passed at 6 kHz;
+    ratio = biggest HF spike in the 200 ms after the change / biggest steady HF spike (floor -60 dBFS), <= 1.5 passes)
+    Slot A OFF -> GLITCH             ratio 1.000  (HF peak during -69.2 dB, steady -60.8 dB)  ok
+    Slot A GLITCH -> MELT            ratio 0.354  (HF peak during -39.1 dB, steady -30.1 dB)  ok
+    Slot A MELT -> OCTAVE            ratio 0.832  (HF peak during -48.5 dB, steady -46.9 dB)  ok
+    Slot A OCTAVE -> FORMANT         ratio 0.728  (HF peak during -49.5 dB, steady -46.7 dB)  ok
+    Slot A FORMANT -> DESTROY        ratio 1.073  (HF peak during -26.7 dB, steady -27.3 dB)  ok
+    Slot A DESTROY -> WARP           ratio 0.764  (HF peak during -29.7 dB, steady -27.3 dB)  ok
+    Slot A WARP -> ROBOT             ratio 1.000  (HF peak during -89.7 dB, steady -94.2 dB)  ok
+    Slot A ROBOT -> VINYL            ratio 0.811  (HF peak during -30.1 dB, steady -28.3 dB)  ok
+    Slot A VINYL -> RING             ratio 0.125  (HF peak during -42.0 dB, steady -24.0 dB)  ok
+    Slot A RING -> FUZZ              ratio 1.241  (HF peak during -42.9 dB, steady -44.8 dB)  ok
+    Slot A FUZZ -> GRANULAR          ratio 0.865  (HF peak during -46.1 dB, steady -44.8 dB)  ok
+    Slot A GRANULAR -> SPECTRAL      ratio 1.000  (HF peak during -81.0 dB, steady -79.1 dB)  ok
+    Slot A SPECTRAL -> FREQ SHIFT    ratio 1.000  (HF peak during -81.5 dB, steady -84.0 dB)  ok
+    Slot A FREQ SHIFT -> REVERSE     ratio 1.000  (HF peak during -83.9 dB, steady -86.3 dB)  ok
+    Slot A REVERSE -> OFF            ratio 1.000  (HF peak during -105.5 dB, steady -98.7 dB)  ok
+    Slot B Off -> Formant            ratio 1.000  (HF peak during -88.5 dB, steady -88.4 dB)  ok
+    Drive 0 -> 100                   ratio 0.753  (HF peak during -32.2 dB, steady -29.7 dB)  ok
+    Type Soft -> Fold                ratio 1.000  (HF peak during -64.4 dB, steady -64.5 dB)  ok
+    Unhinged on                      ratio 0.973  (HF peak during -27.6 dB, steady -27.3 dB)  ok
+    Mix 0 -> 100                     ratio 1.000  (HF peak during -48.4 dB, steady -48.4 dB)  ok
+    Output -24 -> +12                ratio 1.000  (HF peak during -68.4 dB, steady -120.0 dB)  ok
+    Width 0 -> 200                   ratio 1.000  (HF peak during -76.0 dB, steady -120.0 dB)  ok
+    Comb 0 -> 100                    ratio 1.000  (HF peak during -63.3 dB, steady -120.0 dB)  ok
+    Gate 0 -> 100                    ratio 0.824  (HF peak during -58.5 dB, steady -56.8 dB)  ok
+    Crush 0 -> 100                   ratio 1.167  (HF peak during -30.8 dB, steady -32.2 dB)  ok
+    Formant vowel A->U               ratio 1.000  (HF peak during -111.4 dB, steady -120.0 dB)  ok
 
-[5] Sample rates / block sizes
-     44100 Hz  latency 65  all modes finite: yes  block-size independence max diff: -200 dB
-     48000 Hz  latency 65  all modes finite: yes  block-size independence max diff: -200 dB
-     88200 Hz  latency 61  all modes finite: yes  block-size independence max diff: -200 dB
-     96000 Hz  latency 61  all modes finite: yes  block-size independence max diff: -200 dB
-    192000 Hz  latency 49  all modes finite: yes  block-size independence max diff: -200 dB
+[6] MIX 0 and host bypass
+    MIX 0 vs dry (latency aligned): -200 dB
+    bypass vs dry: -200 dB
 
-[6] Aliasing with ALIAS at 0 (4987 Hz sine, energy off the harmonic series vs on it; lower is cleaner)
-    Soft     drive 70: -62.0 dB
-    Hard     drive 70: -61.8 dB
-    Fuzz     drive 70: -61.8 dB
-    Digital  drive 70: -59.0 dB
-    Octave   drive 70: -60.5 dB
-    Melt     drive 70: -60.4 dB
-    Glitch   drive 70: -46.2 dB
-    Nuke     drive 70: -35.6 dB
+[7] Sample rates and block sizes
+     44100 Hz  latency 65  all effects (both slots) finite and < 0 dBFS: yes  block-size independence: -200 dB
+     48000 Hz  latency 65  all effects (both slots) finite and < 0 dBFS: yes  block-size independence: -200 dB
+     88200 Hz  latency 61  all effects (both slots) finite and < 0 dBFS: yes  block-size independence: -200 dB
+     96000 Hz  latency 61  all effects (both slots) finite and < 0 dBFS: yes  block-size independence: -178.68 dB
+    192000 Hz  latency 49  all effects (both slots) finite and < 0 dBFS: yes  block-size independence: -174.597 dB
 
-[7] State
-    restored: 77% 23% 41% 66% -5.0 dB Fuzz 12% On
+[8] State save / restore
+    100 random values, 0 not restored
 
-[8] CPU (stereo, 512-sample blocks, % of one core in real time)
-    48 kHz:  Soft 5.13%  Hard 3.16%  Fuzz 9.21%  Digital 7.40%  Octave 6.28%  Melt 7.10%  Glitch 4.27%  Nuke 13.47%   (worst case: unhinged + alias 50)
-    96 kHz:  Soft 5.90%  Hard 3.49%  Fuzz 10.25%  Digital 7.45%  Octave 7.08%  Melt 7.30%  Glitch 4.40%  Nuke 15.06%   (worst case: unhinged + alias 50)
+[9] User preset save / load
+    saved yes, loaded yes, name 'My Test Preset', 0 parameters differ
 
-[9] Rendering demo WAVs
-    01_soft_warm.wav
-    02_soft_driven.wav
-    03_hard_aggressive.wav
-    04_fuzz_maxed.wav
-    05_digital_folded.wav
-    06_ridiculous.wav
-    07_hard_crush_mix50.wav
-    08_octave.wav
-    09_melt.wav
-    10_glitch.wav
-    11_nuke_unhinged.wav
-    12_alias_hard.wav
-    13_everything_maxed.wav
+[10] CPU (% of one core, stereo, 512-sample blocks, effect in slot A, drive 50)
+    48 kHz: GLITC 3.6 MELT 4.3 OCTAV 4.1 FORMA 4.2 DESTR 5.3 WARP 4.8 ROBOT 4.5 VINYL 4.1 RING 4.4 FUZZ 6.9 GRANU 3.7 SPECT 6.2 FREQ  4.2 REVER 3.8
+      heaviest preset: Pirate Shop Token 13.5%
+    96 kHz: GLITC 4.5 MELT 6.1 OCTAV 5.0 FORMA 4.8 DESTR 6.8 WARP 5.9 ROBOT 5.3 VINYL 5.0 RING 5.6 FUZZ 10.0 GRANU 4.6 SPECT 9.3 FREQ  5.3 REVER 4.5
+      heaviest preset: Pirate Shop Token 17.9%
 
-[10] Editor snapshots
-    editor_default.png, editor_pushed.png, editor_unhinged.png
+[11] Rendering one demo WAV per preset
+    18 files written
 
-420/420 checks passed
+[12] Editor
+    editor_default.png  1120x700  full repaint at 2x: 82.7 ms, centre stage frame at 1x: 7.7 ms  (0.5 s of animation took 0.56 s)
+    editor_formant.png  1120x700  full repaint at 2x: 83.8 ms, centre stage frame at 1x: 10.3 ms  (0.5 s of animation took 0.55 s)
+    editor_anime_gamer.png  1120x700  full repaint at 2x: 104.4 ms, centre stage frame at 1x: 7.1 ms  (0.5 s of animation took 0.55 s)
+    editor_lab.png  1120x700  full repaint at 2x: 95.5 ms, centre stage frame at 1x: 11.4 ms  (0.5 s of animation took 0.55 s)
+    editor_browser.png  1120x700  full repaint at 2x: 111.7 ms, centre stage frame at 1x: 9.4 ms  (0.5 s of animation took 0.55 s)
+
+453/453 checks passed

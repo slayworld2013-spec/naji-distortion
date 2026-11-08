@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(NAJI_DISTORTION VERSION 2.0.0 LANGUAGES C CXX)
+project(NAJI_DISTORTION VERSION 3.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,9 +58,14 @@ juce_add_binary_data(NajiDistortionAssets
         Assets/Fonts/Inter-Bold.otf
         Assets/Fonts/Inter-Medium.otf)
 
-target_sources(NajiDistortion PRIVATE
+set(NAJI_SOURCES
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/Presets.cpp
+    Source/ui/Widgets.cpp
+    Source/ui/PhotoStage.cpp)
+
+target_sources(NajiDistortion PRIVATE ${NAJI_SOURCES})
 
 target_include_directories(NajiDistortion PRIVATE Source)
 
@@ -92,12 +97,11 @@ target_link_libraries(NajiDistortion
 if(NAJI_BUILD_TESTS)
     juce_add_console_app(NajiTestHost PRODUCT_NAME "NajiTestHost")
     # The plugin sources are compiled in too, so the editor can be rendered to a PNG.
-    target_sources(NajiTestHost PRIVATE Tests/TestHost.cpp
-        Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+    target_sources(NajiTestHost PRIVATE Tests/TestHost.cpp ${NAJI_SOURCES})
     target_include_directories(NajiTestHost PRIVATE Source)
     target_compile_definitions(NajiTestHost PRIVATE
         JucePlugin_Name="NAJI DISTORTION" JucePlugin_VersionString="${PROJECT_VERSION}"
-        JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JUCE_PLUGINHOST_VST3=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
         JUCE_USE_XRANDR=0 JUCE_USE_XINERAMA=0 JUCE_USE_XCURSOR=0 JUCE_USE_XRENDER=0)
     target_link_libraries(NajiTestHost PRIVATE
         NajiDistortionAssets

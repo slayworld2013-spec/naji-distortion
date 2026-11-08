@@ -1,27 +1,35 @@
 /*
-    NAJI DISTORTION - offline test host
+    NAJI DISTORTION v3 - offline test host
 
-    Loads the compiled .vst3 exactly like a DAW does, drives it through VST3
-    parameter automation and checks:
-      - every control audibly does its job (measured, not assumed)
-      - no NaN/Inf, sane levels at all modes/sample rates
-      - no clicks when any parameter or the mode jumps
-      - MIX = 0 and host bypass are sample-exact (latency compensated)
-      - state save / restore
-      - CPU load
-    It also renders demo WAVs and PNG snapshots of the editor.
+    Loads the compiled .vst3 exactly like a DAW does and checks:
+      - all parameters exist; 18 factory programs with the exact names
+      - every program recalls every parameter exactly
+      - every effect does what it claims (measured: octave peaks, SSB shift
+        direction, ring sidebands, formant bands, robot harmonics, pitch bend,
+        melt spread, spectral freeze sustain, reverse/glitch/granular time
+        scrambling, vinyl crackle + ageing, destroy/fuzz harmonics)
+      - all 14 effects (and all 18 presets) are measurably different
+      - effect mix = 0 is transparent; plugin MIX 0 and bypass are sample exact
+      - auto gain keeps every effect and preset near the input level
+      - no clicks when switching effects or jumping parameters
+      - 44.1 / 48 / 88.2 / 96 / 192 kHz, odd block sizes, block-size independence
+      - state save/restore, user preset save/load, CPU
+    It also renders a demo WAV per preset and PNG snapshots of the editor.
 
     Usage: NajiTestHost <path/to/NAJI DISTORTION.vst3> <output dir>
+           NajiTestHost calibrate          (drive auto-gain tables)
 */
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <set>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
 using namespace juce;
+namespace fx = naji::fx;
 
 static int failures = 0, checks = 0;
 
@@ -32,31 +40,57 @@ static void check (bool ok, const String& what)
 }
 
 //==============================================================================
-// Test signals
+// Signals
 static AudioBuffer<float> sine (double sr, double seconds, double hz, float amp)
 {
     AudioBuffer<float> b (2, (int) (sr * seconds));
     for (int i = 0; i < b.getNumSamples(); ++i)
     {
         const float v = amp * (float) std::sin (MathConstants<double>::twoPi * hz * i / sr);
-        b.setSample (0, i, v);
-        b.setSample (1, i, v);
+        b.setSample (0, i, v); b.setSample (1, i, v);
     }
     return b;
 }
 
-// Karplus-Strong "guitar" riff: palm-muted chugs and power chords, roughly like a DI guitar.
+static AudioBuffer<float> noise (double sr, double seconds, float amp)
+{
+    AudioBuffer<float> b (2, (int) (sr * seconds));
+    Random r (7);
+    for (int i = 0; i < b.getNumSamples(); ++i)
+    {
+        const float v = amp * (r.nextFloat() * 2.0f - 1.0f);
+        b.setSample (0, i, v); b.setSample (1, i, v);
+    }
+    return b;
+}
+
+// Repeating rising log chirp 200 Hz -> 3.2 kHz over `period` seconds
+static AudioBuffer<float> chirp (double sr, double seconds, double period, float amp)
+{
+    AudioBuffer<float> b (2, (int) (sr * seconds));
+    double ph = 0.0;
+    for (int i = 0; i < b.getNumSamples(); ++i)
+    {
+        const double tt = std::fmod (i / sr, period) / period;
+        const double f = 200.0 * std::pow (16.0, tt);
+        ph += MathConstants<double>::twoPi * f / sr;
+        const float v = amp * (float) std::sin (ph);
+        b.setSample (0, i, v); b.setSample (1, i, v);
+    }
+    return b;
+}
+
+// Karplus-Strong guitar riff (same reference as earlier versions).
 static AudioBuffer<float> riff (double sr, double seconds)
 {
     const int n = (int) (sr * seconds);
     AudioBuffer<float> b (2, n);
     b.clear();
     Random rng (1234);
-
     struct Note { double t, len; std::vector<double> hz; float vel; float damp; };
     std::vector<Note> notes;
     const double E2 = 82.41, B2 = 123.47, E3 = 164.81, G2 = 98.0, D3 = 146.83, A2 = 110.0;
-    const double beat = 60.0 / 140.0 / 2.0;  // 8ths at 140 bpm
+    const double beat = 60.0 / 140.0 / 2.0;
     double t = 0.0;
     while (t < seconds - 1.0)
     {
@@ -65,7 +99,6 @@ static AudioBuffer<float> riff (double sr, double seconds)
         notes.push_back ({ t, beat * 1.9, { A2, E3 }, 0.9f, 0.995f }); t += beat * 2;
         notes.push_back ({ t, beat * 3.8, { E2, B2, E3 }, 1.0f, 0.997f }); t += beat * 4;
     }
-
     for (auto& note : notes)
         for (auto hz : note.hz)
         {
@@ -74,27 +107,27 @@ static AudioBuffer<float> riff (double sr, double seconds)
             float lpState = 0.0f;
             for (auto& s : line) { lpState += 0.35f * ((rng.nextFloat() * 2.0f - 1.0f) - lpState); s = lpState * 2.5f; }
             const int start = (int) (note.t * sr), len = (int) (note.len * sr);
-            const float damp = note.damp > 0.9f ? note.damp : 0.5f; // muted notes lose highs fast
+            const float damp = note.damp > 0.9f ? note.damp : 0.5f;
             const float decay = note.damp > 0.9f ? 0.9985f : 0.985f;
             float prev = 0.0f;
             for (int i = 0; i < len && start + i < n; ++i)
             {
                 const size_t idx = (size_t) (i % period);
                 const float cur = line[idx];
-                const float nv = decay * (damp * cur + (1.0f - damp) * prev);
+                line[idx] = decay * (damp * cur + (1.0f - damp) * prev);
                 prev = cur;
-                line[idx] = nv;
                 const float env = i > len - 200 ? (float) (len - i) / 200.0f : 1.0f;
                 const float v = cur * note.vel * env * 0.22f;
                 b.addSample (0, start + i, v);
                 b.addSample (1, start + i, v * 0.98f);
             }
         }
-
-    b.applyGain (0.5f / jmax (0.001f, b.getMagnitude (0, n)));  // peak -6 dBFS
+    b.applyGain (0.5f / jmax (0.001f, b.getMagnitude (0, n)));
     return b;
 }
 
+//==============================================================================
+// Measurements
 static float rmsDb (const AudioBuffer<float>& b, int start = 0, int len = -1)
 {
     if (len < 0) len = b.getNumSamples() - start;
@@ -102,7 +135,7 @@ static float rmsDb (const AudioBuffer<float>& b, int start = 0, int len = -1)
     for (int c = 0; c < b.getNumChannels(); ++c)
         for (int i = start; i < start + len; ++i)
             s += (double) b.getSample (c, i) * b.getSample (c, i);
-    return Decibels::gainToDecibels ((float) std::sqrt (s / (len * b.getNumChannels())), -200.0f);
+    return Decibels::gainToDecibels ((float) std::sqrt (s / jmax (1, len * b.getNumChannels())), -200.0f);
 }
 
 static bool allFinite (const AudioBuffer<float>& b)
@@ -113,6 +146,8 @@ static bool allFinite (const AudioBuffer<float>& b)
     return true;
 }
 
+static float peakDb (const AudioBuffer<float>& b) { return Decibels::gainToDecibels (b.getMagnitude (0, b.getNumSamples()), -200.0f); }
+
 static float maxStep (const AudioBuffer<float>& b, int start, int end)
 {
     float m = 0.0f;
@@ -122,63 +157,172 @@ static float maxStep (const AudioBuffer<float>& b, int start, int end)
     return m;
 }
 
-// Spectral centroid in Hz (channel 0), used to prove TONE changes brightness.
-static double centroid (const AudioBuffer<float>& b, double sr)
+// 4th-order Butterworth high-pass (channel 0), used to find clicks.
+static AudioBuffer<float> highPassed (const AudioBuffer<float>& b, double sr, double hz)
 {
-    constexpr int order = 14, size = 1 << order;
+    AudioBuffer<float> out (1, b.getNumSamples());
+    out.copyFrom (0, 0, b, 0, 0, b.getNumSamples());
+    for (double q : { 0.5412, 1.3066 })
+    {
+        IIRFilter f;
+        f.setCoefficients (IIRCoefficients::makeHighPass (sr, hz, q));
+        f.processSamples (out.getWritePointer (0), out.getNumSamples());
+    }
+    return out;
+}
+
+static float maxAbs (const AudioBuffer<float>& b, int start, int end)
+{
+    float m = 0.0f;
+    for (int i = jmax (0, start); i < jmin (end, b.getNumSamples()); ++i) m = jmax (m, std::abs (b.getSample (0, i)));
+    return m;
+}
+
+// Averaged power spectrum of channel 0 (from `start`), 1 Hz-ish resolution at order 15.
+static std::vector<double> spectrum (const AudioBuffer<float>& b, int start, int order = 15)
+{
+    const int size = 1 << order;
     dsp::FFT fft (order);
-    std::vector<float> data (size * 2, 0.0f);
-    double num = 0.0, den = 0.0;
-    for (int start = 0; start + size <= b.getNumSamples(); start += size)
+    std::vector<float> data ((size_t) size * 2);
+    std::vector<double> acc ((size_t) size / 2, 0.0);
+    for (int s = start; s + size <= b.getNumSamples(); s += size / 2)
     {
         std::fill (data.begin(), data.end(), 0.0f);
         for (int i = 0; i < size; ++i)
-            data[(size_t) i] = b.getSample (0, start + i)
-                               * (0.5f - 0.5f * std::cos (MathConstants<float>::twoPi * i / (size - 1)));
+            data[(size_t) i] = b.getSample (0, s + i) * (0.5f - 0.5f * std::cos (MathConstants<float>::twoPi * i / (size - 1)));
         fft.performFrequencyOnlyForwardTransform (data.data());
-        for (int k = 1; k < size / 2; ++k)
-        {
-            const double f = k * sr / size;
-            num += f * data[(size_t) k];
-            den += data[(size_t) k];
-        }
+        for (int k = 0; k < size / 2; ++k) acc[(size_t) k] += (double) data[(size_t) k] * data[(size_t) k];
     }
-    return den > 0 ? num / den : 0.0;
+    return acc;
 }
 
-// Aliasing: energy away from harmonics of f0, relative to total (dB).
-static double aliasRatioDb (const AudioBuffer<float>& b, double sr, double f0)
+static double bandEnergy (const std::vector<double>& sp, double sr, double lo, double hi)
 {
-    constexpr int order = 15, size = 1 << order;
+    const double binHz = sr / (double) (sp.size() * 2);
+    double e = 1.0e-30;
+    for (size_t k = (size_t) std::max (1.0, lo / binHz); k < sp.size() && (double) k * binHz <= hi; ++k) e += sp[k];
+    return e;
+}
+
+static double peakHz (const std::vector<double>& sp, double sr, double lo, double hi)
+{
+    const double binHz = sr / (double) (sp.size() * 2);
+    size_t best = 1;
+    for (size_t k = (size_t) std::max (1.0, lo / binHz); k < sp.size() && (double) k * binHz <= hi; ++k)
+        if (sp[k] > sp[best] || best < (size_t) (lo / binHz)) best = k;
+    return (double) best * binHz;
+}
+
+static double dbRatio (double a, double b) { return 10.0 * std::log10 (a / b); }
+
+static double centroid (const std::vector<double>& sp, double sr)
+{
+    const double binHz = sr / (double) (sp.size() * 2);
+    double num = 0.0, den = 1e-30;
+    for (size_t k = 1; k < sp.size(); ++k) { num += (double) k * binHz * sp[k]; den += sp[k]; }
+    return num / den;
+}
+
+// Fraction of 25 ms steps where the zero-crossing rate goes down (a rising
+// chirp only goes up, so time-scrambling effects push this way up).
+static double zcrDecreasingFraction (const AudioBuffer<float>& b, int start)
+{
+    const int win = 1200;
+    std::vector<int> z;
+    for (int s = start; s + win <= b.getNumSamples(); s += win)
+    {
+        int c = 0;
+        for (int i = s + 1; i < s + win; ++i)
+            if ((b.getSample (0, i - 1) < 0.0f) != (b.getSample (0, i) < 0.0f)) ++c;
+        z.push_back (c);
+    }
+    int dec = 0, tot = 0;
+    for (size_t i = 1; i < z.size(); ++i)
+    {
+        if (z[i] < 4 && z[i - 1] < 4) continue;
+        ++tot;
+        if (z[i] + 2 < z[i - 1]) ++dec;
+    }
+    return tot > 0 ? (double) dec / tot : 0.0;
+}
+
+static double zcrIncreasingFraction (const AudioBuffer<float>& b, int start)
+{
+    const int win = 1200;
+    std::vector<int> z;
+    for (int s = start; s + win <= b.getNumSamples(); s += win)
+    {
+        int c = 0;
+        for (int i = s + 1; i < s + win; ++i)
+            if ((b.getSample (0, i - 1) < 0.0f) != (b.getSample (0, i) < 0.0f)) ++c;
+        z.push_back (c);
+    }
+    int inc = 0, tot = 0;
+    for (size_t i = 1; i < z.size(); ++i)
+    {
+        if (z[i] < 4 && z[i - 1] < 4) continue;
+        ++tot;
+        if (z[i] > z[i - 1] + 2) ++inc;
+    }
+    return tot > 0 ? (double) inc / tot : 0.0;
+}
+
+// Time-frequency fingerprint: 24 log bands per 2048-sample frame, in dB.
+static std::vector<float> fingerprint (const AudioBuffer<float>& b, double sr, int start)
+{
+    constexpr int order = 11, size = 1 << order;
     dsp::FFT fft (order);
-    std::vector<float> data (size * 2, 0.0f);
-    const int start = b.getNumSamples() - size;
-    for (int i = 0; i < size; ++i)
+    std::vector<float> data ((size_t) size * 2), fp;
+    for (int s = start; s + size <= b.getNumSamples(); s += size)
     {
-        const double w = 0.35875 - 0.48829 * std::cos (MathConstants<double>::twoPi * i / (size - 1))
-                       + 0.14128 * std::cos (2 * MathConstants<double>::twoPi * i / (size - 1))
-                       - 0.01168 * std::cos (3 * MathConstants<double>::twoPi * i / (size - 1));
-        data[(size_t) i] = (float) (b.getSample (0, start + i) * w);
+        std::fill (data.begin(), data.end(), 0.0f);
+        for (int i = 0; i < size; ++i)
+            data[(size_t) i] = 0.5f * (b.getSample (0, s + i) + b.getSample (1, s + i))
+                             * (0.5f - 0.5f * std::cos (MathConstants<float>::twoPi * i / (size - 1)));
+        fft.performFrequencyOnlyForwardTransform (data.data());
+        for (int band = 0; band < 24; ++band)
+        {
+            const double lo = 60.0 * std::pow (2.0, band * 8.0 / 24.0), hi = lo * std::pow (2.0, 8.0 / 24.0);
+            double e = 1e-12;
+            for (int k = (int) (lo * size / sr); k <= (int) (hi * size / sr) && k < size / 2; ++k) e += (double) data[(size_t) k] * data[(size_t) k];
+            fp.push_back ((float) jmax (-100.0, 10.0 * std::log10 (e)));
+        }
     }
-    fft.performFrequencyOnlyForwardTransform (data.data());
-    double harm = 0.0, other = 0.0;
-    for (int k = 2; k < size / 2; ++k)
-    {
-        const double f = k * sr / size;
-        const double e = (double) data[(size_t) k] * data[(size_t) k];
-        const double nearest = std::round (f / f0) * f0;
-        if (std::abs (f - nearest) < 6.0 * sr / size) harm += e; else other += e;
-    }
-    return 10.0 * std::log10 (other / (harm + 1e-30) + 1e-30);
+    return fp;
+}
+
+static float fpDistance (const std::vector<float>& a, const std::vector<float>& b)
+{
+    double d = 0.0;
+    const size_t n = std::min (a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) d += std::abs (a[i] - b[i]);
+    return (float) (d / (double) jmax ((size_t) 1, n));
 }
 
 //==============================================================================
+// Hosted plugin wrapper. Parameters are addressed by our string IDs; the
+// mapping to the hosted VST3 parameter goes through the parameter name.
 struct Plugin
 {
     std::unique_ptr<AudioPluginInstance> inst;
-    std::map<String, AudioProcessorParameter*> params;
+    std::map<String, AudioProcessorParameter*> hosted;     // by name
+    NajiDistortionProcessor reference;                     // in-process copy, for ranges/names/defaults
+    std::map<String, RangedAudioParameter*> local;         // by ID
     double sr = 48000.0;
     int block = 512;
+
+    void index()
+    {
+        for (auto* p : inst->getParameters()) hosted[p->getName (256)] = p;
+        for (auto* p : reference.getParameters())
+            if (auto* rp = dynamic_cast<RangedAudioParameter*> (p)) local[rp->getParameterID()] = rp;
+    }
+
+    AudioProcessorParameter* h (const String& id)
+    {
+        auto it = hosted.find (local.at (id)->getName (256));
+        return it != hosted.end() ? it->second : nullptr;
+    }
 
     void prepare (double newSr, int newBlock)
     {
@@ -188,27 +332,18 @@ struct Plugin
         inst->prepareToPlay (sr, block);
     }
 
-    // Plain values: percent knobs 0..100, output in dB, type 0..7, unhinged 0/1
-    void set (const String& name, float v)
+    void set (const String& id, float plain) { h (id)->setValue (local.at (id)->convertTo0to1 (plain)); }
+
+    // All parameters to their defaults, then the given plain values.
+    void apply (std::initializer_list<std::pair<const char*, float>> values)
     {
-        auto* p = params.at (name);
-        float norm = v / 100.0f;
-        if (name == "Output")   norm = (v + 24.0f) / 36.0f;
-        if (name == "Type")     norm = v / 7.0f;
-        if (name == "Unhinged") norm = v;
-        p->setValue (jlimit (0.0f, 1.0f, norm));
+        for (auto& [id, p] : local) h (id)->setValue (p->getDefaultValue());
+        // neutral base for effect tests
+        set ("slotA", 0); set ("slotB", 0); set ("drive", 20); set ("tone", 50);
+        for (auto& [id, v] : values) set (id, v);
     }
 
-    void setAll (float drive, float tone, float crush, float mix, float out, int type,
-                 float alias = 0.0f, bool unhinged = false)
-    {
-        set ("Drive", drive); set ("Tone", tone); set ("Crush", crush);
-        set ("Mix", mix); set ("Output", out); set ("Type", (float) type);
-        set ("Alias", alias); set ("Unhinged", unhinged ? 1.0f : 0.0f);
-    }
-
-    AudioBuffer<float> render (const AudioBuffer<float>& in, std::function<void (int)> perBlock = {},
-                               int fixedBlock = -1)
+    AudioBuffer<float> render (const AudioBuffer<float>& in, std::function<void (int)> perBlock = {}, int fixedBlock = -1)
     {
         AudioBuffer<float> out (in);
         MidiBuffer midi;
@@ -217,7 +352,7 @@ struct Plugin
         while (pos < out.getNumSamples())
         {
             int n = fixedBlock > 0 ? fixedBlock : block;
-            if (fixedBlock == 0) n = 1 + rng.nextInt (block);      // random block sizes
+            if (fixedBlock == 0) n = 1 + rng.nextInt (block);
             n = jmin (n, out.getNumSamples() - pos);
             if (perBlock) perBlock (blockIndex);
             AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, n);
@@ -227,10 +362,7 @@ struct Plugin
         return out;
     }
 
-    // Run some silence so smoothed parameters settle after a change.
     void settle (double seconds = 0.3) { AudioBuffer<float> s (2, (int) (sr * seconds)); s.clear(); render (s); }
-
-    // Render twice and keep the second pass, so the auto gain has locked on.
     AudioBuffer<float> renderWarm (const AudioBuffer<float>& in) { render (in); return render (in); }
 };
 
@@ -239,520 +371,709 @@ static void writeWav (const AudioBuffer<float>& b, double sr, const File& f)
     f.deleteFile();
     WavAudioFormat wav;
     std::unique_ptr<OutputStream> os (f.createOutputStream().release());
-    if (auto* w = wav.createWriterFor (os.get(), sr, 2, 24, {}, 0))
-    {
-        os.release();
-        std::unique_ptr<AudioFormatWriter> writer (w);
+    if (os == nullptr) return;
+    if (auto writer = wav.createWriterFor (os, AudioFormatWriterOptions{}.withSampleRate (sr).withNumChannels (2).withBitsPerSample (24)))
         writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
-    }
 }
 
-static void snapshotEditor (const File& f, std::function<void (NajiDistortionProcessor&)> setup)
+//==============================================================================
+static int calibrate()
 {
     NajiDistortionProcessor proc;
-    if (setup) setup (proc);
-    std::unique_ptr<AudioProcessorEditor> ed (proc.createEditor());
-    auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
-    f.deleteFile();
-    PNGImageFormat png;
-    if (auto os = f.createOutputStream())
-        png.writeImageToStream (img, *os);
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    const auto in = riff (48000.0, 6.0);
+    proc.presets.applyValues ({ { "slotA", 0.0f }, { "slotB", 0.0f } });
+    auto set = [&] (const char* id, float plain) { auto* p = proc.apvts.getParameter (id); p->setValueNotifyingHost (p->convertTo0to1 (plain)); };
+    for (int u = 0; u < 2; ++u)
+    {
+        std::cout << "        { // " << (u ? "unhinged" : "normal") << "\n";
+        for (int m = 0; m < 4; ++m)
+        {
+            std::cout << "            {";
+            for (int d = 0; d <= 100; d += 10)
+            {
+                set ("drive", (float) d); set ("type", (float) m); set ("unhinged", (float) u);
+                MidiBuffer midi;
+                for (int pass = 0; pass < 3; ++pass)
+                {
+                    AudioBuffer<float> buf (in);
+                    for (int pos = 0; pos < buf.getNumSamples(); pos += 512)
+                    {
+                        AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, pos, jmin (512, buf.getNumSamples() - pos));
+                        proc.processBlock (view, midi);
+                    }
+                }
+                std::cout << " " << String (proc.autoGainDb.load(), 1) << "f" << (d < 100 ? "," : "");
+            }
+            std::cout << " },\n";
+        }
+        std::cout << "        },\n";
+    }
+    return 0;
 }
+
+//==============================================================================
+static void editorSnapshots (const File& outDir)
+    {
+    auto snap = [&] (const String& file, int preset, std::function<void (NajiDistortionProcessor&, AudioProcessorEditor&)> setup)
+    {
+        NajiDistortionProcessor proc;
+        proc.setRateAndBufferSizeDetails (48000.0, 512);
+        proc.prepareToPlay (48000.0, 512);
+        if (preset >= 0) proc.setCurrentProgram (preset);
+        // feed some audio so meters / scope have data
+        auto in = riff (48000.0, 1.0);
+        MidiBuffer midi;
+        for (int pos = 0; pos < in.getNumSamples(); pos += 512)
+        {
+            AudioBuffer<float> view (in.getArrayOfWritePointers(), 2, pos, jmin (512, in.getNumSamples() - pos));
+            proc.processBlock (view, midi);
+        }
+        std::unique_ptr<AudioProcessorEditor> ed (proc.createEditor());
+        if (setup) setup (proc, *ed);
+        const auto t0 = Time::getHighResolutionTicks();
+        auto more = riff (48000.0, 2.0);
+        int feed = 0;
+        for (int k = 0; k < 30; ++k)
+        {
+            for (int j = 0; j < 2 && feed + 512 <= more.getNumSamples(); ++j, feed += 512)
+            {
+                AudioBuffer<float> view (more.getArrayOfWritePointers(), 2, feed, 512);
+                proc.processBlock (view, midi);
+            }
+            MessageManager::getInstance()->runDispatchLoopUntil (17);
+        }
+        const double animSecs = Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t0);
+        const auto t1 = Time::getHighResolutionTicks();
+        auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
+        const double paintMs = 1000.0 * Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t1);
+
+        // Per-frame cost of the animated centre display at 1x (what a normal screen redraws each frame)
+        double stageMs = 0.0;
+        std::function<Component* (Component&)> findStage = [&] (Component& c) -> Component*
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (dynamic_cast<naji::ui::PhotoStage*> (child) != nullptr) return child;
+                if (auto* r = findStage (*child)) return r;
+            }
+            return nullptr;
+        };
+        if (auto* st = findStage (*ed))
+        {
+            const auto t2 = Time::getHighResolutionTicks();
+            for (int k = 0; k < (getenv ("NAJI_PROFILE") ? 3000 : 20); ++k) st->createComponentSnapshot (st->getLocalBounds(), true, 1.0f);
+            stageMs = 1000.0 * Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t2) / 20.0;
+        }
+
+        File out = outDir.getChildFile (file);
+        out.deleteFile();
+        PNGImageFormat png;
+        if (auto os = out.createOutputStream()) png.writeImageToStream (img, *os);
+        std::cout << "    " << file << "  " << ed->getWidth() << "x" << ed->getHeight() << "  full repaint at 2x: "
+                  << String (paintMs, 1) << " ms, centre stage frame at 1x: " << String (stageMs, 1) << " ms  (0.5 s of animation took " << String (animSecs, 2) << " s)\n";
+        check (ed->getWidth() >= 900 && ed->getHeight() >= 600, "editor size");
+    };
+    snap ("editor_default.png", 0, {});
+    snap ("editor_formant.png", 3, {});
+    snap ("editor_anime_gamer.png", 13, {});
+    snap ("editor_lab.png", 8, [] (NajiDistortionProcessor&, AudioProcessorEditor& ed)
+    {
+        std::function<void (Component&)> find = [&] (Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* rp = dynamic_cast<naji::ui::RightPanel*> (child)) rp->setTab (1);
+                find (*child);
+            }
+        };
+        find (ed);
+    });
+    snap ("editor_browser.png", 9, [] (NajiDistortionProcessor&, AudioProcessorEditor& ed)
+    {
+        std::function<void (Component&)> find = [&] (Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (child->getComponentID() == "browseButton")
+                    if (auto* b = dynamic_cast<Button*> (child)) b->triggerClick();
+                find (*child);
+            }
+        };
+        find (ed);
+    });
+}
+
 
 //==============================================================================
 int main (int argc, char** argv)
 {
     ScopedJuceInitialiser_GUI juceInit;
+    std::cout << std::unitbuf;
 
-    // "NajiTestHost calibrate": prints the steady-state auto-gain (dB) per mode / drive
-    // on the reference riff, used for the static tables in DistortionEngine::makeupDb.
-    if (argc >= 2 && String (argv[1]) == "calibrate")
+    if (argc >= 2 && String (argv[1]) == "calibrate") return calibrate();
+    // "switchprobe a b": slot A effect a -> b on a 110 Hz sine, print HF (>6 kHz) peak per 5 ms around the change
+    if (argc >= 4 && String (argv[1]) == "switchprobe")
     {
         NajiDistortionProcessor proc;
-        proc.setRateAndBufferSizeDetails (48000.0, 512);
-        proc.prepareToPlay (48000.0, 512);
-        const auto in = riff (48000.0, 6.0);
-        auto set = [&] (const char* id, float plain)
-        {
-            auto* prm = proc.apvts.getParameter (id);
-            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
-        };
-        for (int u = 0; u < 2; ++u)
-        {
-            std::cout << "        { // " << (u ? "unhinged" : "normal") << "\n";
-            for (int m = 0; m < 8; ++m)
-            {
-                std::cout << "            {";
-                for (int d = 0; d <= 100; d += 10)
-                {
-                    set (ParamIDs::drive, (float) d); set (ParamIDs::type, (float) m);
-                    set (ParamIDs::unhinged, (float) u); set (ParamIDs::tone, 50); set (ParamIDs::crush, 0);
-                    set (ParamIDs::alias, 0); set (ParamIDs::mix, 100); set (ParamIDs::output, 0);
-                    MidiBuffer midi;
-                    for (int pass = 0; pass < 3; ++pass)
-                    {
-                        AudioBuffer<float> buf (in);
-                        for (int pos = 0; pos < buf.getNumSamples(); pos += 512)
-                        {
-                            AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, pos, jmin (512, buf.getNumSamples() - pos));
-                            proc.processBlock (view, midi);
-                        }
-                    }
-                    std::cout << " " << String (proc.autoGainDb.load(), 1) << "f" << (d < 100 ? "," : "");
-                }
-                std::cout << " },\n";
-            }
-            std::cout << "        },\n";
-        }
-        return 0;
-    }
-
-    // "NajiTestHost probe drive tone crush alias mode unhinged": RMS + auto gain for one setting.
-    if (argc >= 8 && String (argv[1]) == "probe")
-    {
-        NajiDistortionProcessor proc;
-        proc.setRateAndBufferSizeDetails (48000.0, 512);
-        proc.prepareToPlay (48000.0, 512);
-        const auto in = riff (48000.0, 6.0);
-        auto set = [&] (const char* id, float plain)
-        {
-            auto* prm = proc.apvts.getParameter (id);
-            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
-        };
-        set (ParamIDs::drive, String (argv[2]).getFloatValue()); set (ParamIDs::tone, String (argv[3]).getFloatValue());
-        set (ParamIDs::crush, String (argv[4]).getFloatValue()); set (ParamIDs::alias, String (argv[5]).getFloatValue());
-        set (ParamIDs::type, String (argv[6]).getFloatValue()); set (ParamIDs::unhinged, String (argv[7]).getFloatValue());
+        proc.setRateAndBufferSizeDetails (48000.0, 256);
+        proc.prepareToPlay (48000.0, 256);
+        proc.presets.applyValues ({ { "slotA", String (argv[2]).getFloatValue() }, { "slotB", 0.0f }, { "drive", 40.0f } });
+        auto sig = sine (48000.0, 4.0, 110.0, 0.25f);
         MidiBuffer midi;
-        for (int pass = 0; pass < 3; ++pass)
+        for (int pos = 0; pos < sig.getNumSamples(); pos += 256)
         {
-            AudioBuffer<float> buf (in);
-            for (int pos = 0; pos < buf.getNumSamples(); pos += 512)
-            {
-                AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, pos, jmin (512, buf.getNumSamples() - pos));
-                proc.processBlock (view, midi);
-            }
-            std::cout << "pass " << pass << " rms " << rmsDb (buf) << " in " << rmsDb (in) << " autogain " << proc.autoGainDb.load() << "\n";
-            if (pass == 2 && argc >= 9) writeWav (buf, 48000.0, File (String::fromUTF8 (argv[8])));
+            if (pos == 256 * 375) proc.apvts.getParameter ("slotA")->setValueNotifyingHost (proc.apvts.getParameter ("slotA")->convertTo0to1 (String (argv[3]).getFloatValue()));
+            AudioBuffer<float> view (sig.getArrayOfWritePointers(), 2, pos, 256);
+            proc.processBlock (view, midi);
         }
+        auto hf = highPassed (sig, 48000.0, 6000.0);
+        const int at = 256 * 375;
+        for (int w = (getenv ("NAJI_W0") ? atoi (getenv ("NAJI_W0")) : -4); w < (getenv ("NAJI_W1") ? atoi (getenv ("NAJI_W1")) : 30); ++w)
+            std::cout << String (w * 5).paddedLeft (' ', 4) << " ms  HF " << String (Decibels::gainToDecibels (maxAbs (hf, at + w * 240, at + (w + 1) * 240), -120.0f), 1)
+                      << "  level " << String (Decibels::gainToDecibels (sig.getMagnitude (0, at + w * 240, 240), -120.0f), 1) << "\n";
         return 0;
     }
-
+    // "fxprobe <effect id> p0 p1 p2 p3 p4 p5 <sine Hz>": run one engine directly, print the strongest peaks.
+    if (argc >= 10 && String (argv[1]) == "fxprobe")
+    {
+        const double rate = 48000.0;
+        auto eng = naji::dsp::createEffect (String (argv[2]).getIntValue());
+        eng->prepare (rate, 512);
+        auto in = sine (rate, 3.0, String (argv[9]).getDoubleValue(), 0.3f);
+        std::vector<float> pv[6];
+        naji::dsp::ParamBlock pb;
+        for (int k = 0; k < 6; ++k) { pv[k].assign (512, String (argv[3 + k]).getFloatValue() * 0.01f); pb.v[k] = pv[k].data(); }
+        naji::dsp::Transport tr;
+        for (int pos = 0; pos < in.getNumSamples(); pos += 512)
+        {
+            float* ch[2] = { in.getWritePointer (0, pos), in.getWritePointer (1, pos) };
+            eng->process (ch, 2, jmin (512, in.getNumSamples() - pos), pb, tr);
+        }
+        auto sp = spectrum (in, 24000);
+        std::vector<std::pair<double, int>> peaks;
+        for (int k = 2; k < (int) sp.size() - 2; ++k)
+            if (sp[(size_t) k] > sp[(size_t) k - 1] && sp[(size_t) k] >= sp[(size_t) k + 1]) peaks.push_back ({ sp[(size_t) k], k });
+        std::sort (peaks.rbegin(), peaks.rend());
+        double tot = 0; for (auto v : sp) tot += v;
+        for (size_t i = 0; i < std::min<size_t> (8, peaks.size()); ++i)
+            std::cout << String (peaks[i].second * rate / 32768.0, 1) << " Hz  " << String (10.0 * std::log10 (peaks[i].first / tot), 1) << " dB\n";
+        return 0;
+    }
+    if (argc >= 3 && String (argv[1]) == "snapshots")
+    {
+        const File dir { File::getCurrentWorkingDirectory().getChildFile (String::fromUTF8 (argv[2])) };
+        dir.createDirectory();
+        editorSnapshots (dir);
+        return failures == 0 ? 0 : 1;
+    }
     if (argc < 3) { std::cout << "usage: NajiTestHost <plugin.vst3> <outdir>\n"; return 2; }
+
     const File pluginFile { File::getCurrentWorkingDirectory().getChildFile (String::fromUTF8 (argv[1])) };
     const File outDir { File::getCurrentWorkingDirectory().getChildFile (String::fromUTF8 (argv[2])) };
     outDir.createDirectory();
 
-    // ---- Load the real VST3 ------------------------------------------------
     AudioPluginFormatManager fm;
     fm.addFormat (new VST3PluginFormat());
     OwnedArray<PluginDescription> types;
     VST3PluginFormat vst3;
     vst3.findAllTypesForFile (types, pluginFile.getFullPathName());
     if (types.isEmpty()) { std::cout << "Could not scan plugin\n"; return 1; }
-
     const auto& desc = *types[0];
-    std::cout << "Loaded: " << desc.name << " | " << desc.manufacturerName << " | " << desc.category
-              << " | v" << desc.version << " | ins " << desc.numInputChannels << " outs " << desc.numOutputChannels << "\n";
+    std::cout << "Loaded: " << desc.name << " | " << desc.manufacturerName << " | " << desc.category << " | v" << desc.version << "\n";
 
     String err;
     Plugin p;
     p.inst = fm.createPluginInstance (desc, 48000.0, 512, err);
     if (p.inst == nullptr) { std::cout << "Instantiate failed: " << err << "\n"; return 1; }
-
     auto layout = p.inst->getBusesLayout();
     layout.inputBuses.getReference (0) = AudioChannelSet::stereo();
     layout.outputBuses.getReference (0) = AudioChannelSet::stereo();
     check (p.inst->setBusesLayout (layout), "stereo layout accepted");
+    p.index();
 
-    std::cout << "Parameters:";
-    for (auto* prm : p.inst->getParameters())
+    // ---- 0. Parameters & programs ---------------------------------------------
+    std::cout << "\n[0] Parameters and programs\n";
     {
-        p.params[prm->getName (64)] = prm;
-        std::cout << " [" << prm->getName (64) << " = " << prm->getCurrentValueAsText() << "]";
+        int missing = 0;
+        for (auto& [id, lp] : p.local) if (p.h (id) == nullptr) { ++missing; std::cout << "    missing: " << id << "\n"; }
+        std::cout << "    " << p.local.size() << " parameters, " << missing << " missing in the VST3\n";
+        check (missing == 0 && p.local.size() == 16 + 14 * 6, "all 100 parameters exposed");
+
+        const char* expected[] = { "Payday 2", "Dollar Store Cappucino Assassino", "Gummy808s", "Jacob", "Nineslay", "Raheem", "Recqn",
+                                   "Liam", "Housprty", "Raheem. Yshaouzi", "Danzie", "Yusuf", "Fuquad", "Anime Gamer",
+                                   "Dicks Sporting Goods", "Fortnite", "Pirate Shop Token", "Boolymon" };
+        check (p.inst->getNumPrograms() == 18, "18 factory programs");
+        bool namesOk = true;
+        for (int i = 0; i < 18; ++i) namesOk = namesOk && p.inst->getProgramName (i) == expected[i];
+        check (namesOk, "program names exact");
+        std::cout << "    programs: " << p.inst->getNumPrograms() << ", names " << (namesOk ? "exact" : "WRONG") << "\n";
     }
-    std::cout << "\n";
-    for (auto n : { "Drive", "Tone", "Crush", "Mix", "Output", "Type", "Alias", "Unhinged" })
-        check (p.params.count (n) == 1, String ("parameter exists: ") + n);
     if (failures) return 1;
 
     p.prepare (48000.0, 512);
     const int latency = p.inst->getLatencySamples();
-    std::cout << "Reported latency: " << latency << " samples (" << String (latency / 48.0, 2) << " ms @48k)\n";
-    check (latency > 0 && latency < 256, "latency reported to host");
-
-    const auto riff48 = riff (48000.0, 6.0);
-    const char* modeNames[] = { "Soft", "Hard", "Fuzz", "Digital", "Octave", "Melt", "Glitch", "Nuke" };
-    constexpr int numModes = 8;
+    std::cout << "    latency " << latency << " samples\n";
+    const double sr = 48000.0;
+    const auto riff48 = riff (sr, 6.0);
     const float inRms = rmsDb (riff48);
-    constexpr float levelTol = 2.0f;   // auto gain must hold the wet level within +-2 dB of the input
 
-    // ---- 1. Level / sanity table --------------------------------------------
-    std::cout << "\n[1] Output RMS (dBFS) on guitar riff, input RMS " << String (rmsDb (riff48), 1) << " dBFS, tone 50, mix 100\n";
-    std::cout << "    mode      drive:   0     35     70    100   | crush 50 @ drive 70 | crush 100 @ drive 70\n";
-    for (int m = 0; m < numModes; ++m)
+    // ---- 1. Effect-specific measurements ---------------------------------------
+    std::cout << "\n[1] Effect DSP checks (drive 0, slot A only)\n";
+    auto fxOnly = [&] (int effect, std::initializer_list<std::pair<const char*, float>> extra)
     {
-        String line = "    " + String (modeNames[m]).paddedRight (' ', 9) + "      ";
-        for (float d : { 0.0f, 35.0f, 70.0f, 100.0f })
-        {
-            p.setAll (d, 50, 0, 100, 0, m); p.settle();
-            auto out = p.renderWarm (riff48);
-            check (allFinite (out), "finite output");
-            check (out.getMagnitude (0, out.getNumSamples()) < 1.0f, "peak below 0 dBFS");
-            check (std::abs (rmsDb (out) - inRms) < levelTol, String ("auto gain holds level: ") + modeNames[m] + " drive " + String (d));
-            line << String (rmsDb (out), 1).paddedLeft (' ', 6) << " ";
-        }
-        for (float c : { 50.0f, 100.0f })
-        {
-            p.setAll (70, 50, c, 100, 0, m); p.settle();
-            auto out = p.renderWarm (riff48);
-            check (allFinite (out), "finite output (crush)");
-            check (std::abs (rmsDb (out) - inRms) < levelTol, String ("auto gain holds level with crush: ") + modeNames[m]);
-            line << "  |   " << String (rmsDb (out), 1).paddedLeft (' ', 6) << "        ";
-        }
-        std::cout << line << "\n";
-    }
+        p.apply ({ { "drive", 0 }, { "tone", 75 } });
+        p.set ("slotA", (float) effect);
+        for (auto& [id, v] : extra) p.set (id, v);
+        p.settle (0.3);
+    };
+    {
+        // OCTAVE
+        auto s220 = sine (sr, 3.0, 220.0, 0.3f);
+        fxOnly (fx::Octave, { { "octave_down", 100 }, { "octave_up", 0 }, { "octave_sub", 0 }, { "octave_harm", 0 }, { "octave_blend", 100 } });
+        auto sp = spectrum (p.render (s220), 24000);
+        const double down110 = dbRatio (bandEnergy (sp, sr, 100, 120), bandEnergy (sp, sr, 210, 230));
+        fxOnly (fx::Octave, { { "octave_down", 0 }, { "octave_up", 100 }, { "octave_sub", 0 }, { "octave_harm", 0 }, { "octave_blend", 100 } });
+        sp = spectrum (p.render (s220), 24000);
+        const double up440 = dbRatio (bandEnergy (sp, sr, 430, 450), bandEnergy (sp, sr, 210, 230));
+        fxOnly (fx::Octave, { { "octave_down", 0 }, { "octave_up", 0 }, { "octave_sub", 100 }, { "octave_harm", 0 }, { "octave_blend", 100 } });
+        sp = spectrum (p.render (s220), 24000);
+        const double sub110 = dbRatio (bandEnergy (sp, sr, 100, 120), bandEnergy (sp, sr, 210, 230));
+        std::cout << "    OCTAVE   down: 110 Hz vs 220 Hz " << String (down110, 1) << " dB | up: 440 vs 220 " << String (up440, 1)
+                  << " dB | sub: 110 vs 220 " << String (sub110, 1) << " dB\n";
+        check (down110 > 10.0, "octave down produces 110 Hz from 220 Hz");
+        check (up440 > 10.0, "octave up produces 440 Hz from 220 Hz");
+        check (sub110 > 6.0, "analog sub produces 110 Hz");
 
-    std::cout << "\n[1b] Drive sweep 0..100 step 10 (RMS dBFS, tone 50; input is " << String (inRms, 1) << ")\n";
-    for (int u = 0; u < 2; ++u)
-        for (int m = 0; m < numModes; ++m)
+        // FREQ SHIFT (+300 Hz and -300 Hz)
+        auto s1k = sine (sr, 3.0, 1000.0, 0.3f);
+        const float vUp = (float) (50.0 + 50.0 * std::cbrt (300.0 / 2000.0)), vDn = 100.0f - vUp;
+        fxOnly (fx::FreqShift, { { "fshift_shift", vUp }, { "fshift_fb", 0 }, { "fshift_mod", 0 }, { "fshift_stereo", 0 }, { "fshift_mix", 100 } });
+        sp = spectrum (p.render (s1k), 24000);
+        const double pkUp = peakHz (sp, sr, 200, 3000), ssbUp = dbRatio (bandEnergy (sp, sr, 1290, 1310), bandEnergy (sp, sr, 690, 710));
+        fxOnly (fx::FreqShift, { { "fshift_shift", vDn }, { "fshift_fb", 0 }, { "fshift_mod", 0 }, { "fshift_stereo", 0 }, { "fshift_mix", 100 } });
+        sp = spectrum (p.render (s1k), 24000);
+        const double pkDn = peakHz (sp, sr, 200, 3000);
+        std::cout << "    FSHIFT   +300 Hz -> peak " << String (pkUp, 1) << " Hz (upper vs lower sideband " << String (ssbUp, 1)
+                  << " dB) | -300 Hz -> peak " << String (pkDn, 1) << " Hz\n";
+        check (std::abs (pkUp - 1300.0) < 5.0, "frequency shift +300 Hz moves 1 kHz to 1.3 kHz");
+        check (std::abs (pkDn - 700.0) < 5.0, "frequency shift -300 Hz moves 1 kHz to 700 Hz");
+        check (ssbUp > 25.0, "frequency shift is single-sideband");
+
+        // RING
+        const float vRing = (float) (100.0 * std::log (300.0) / std::log (4000.0));
+        fxOnly (fx::Ring, { { "ring_freq", vRing }, { "ring_shape", 0 }, { "ring_track", 0 }, { "ring_fm", 0 }, { "ring_spread", 0 }, { "ring_mix", 100 } });
+        sp = spectrum (p.render (s1k), 24000);
+        const double side = dbRatio (bandEnergy (sp, sr, 690, 710) + bandEnergy (sp, sr, 1290, 1310), bandEnergy (sp, sr, 990, 1010));
+        std::cout << "    RING     300 Hz carrier on 1 kHz: sidebands vs carrier-input " << String (side, 1) << " dB\n";
+        check (side > 20.0, "ring modulation creates 700 + 1300 Hz and removes 1 kHz");
+
+        // WARP bend +12
+        fxOnly (fx::Warp, { { "warp_bend", 100 }, { "warp_sweep", 0 }, { "warp_fm", 0 }, { "warp_mix", 100 } });
+        sp = spectrum (p.render (s1k), 24000);
+        const double warpPk = peakHz (sp, sr, 200, 5000);
+        std::cout << "    WARP     bend +12 st: 1 kHz -> " << String (warpPk, 1) << " Hz\n";
+        check (std::abs (warpPk - 2000.0) < 15.0, "warp bend +12 doubles the pitch");
+
+        // MELT spread
+        fxOnly (fx::Melt, { { "melt_wobble", 100 }, { "melt_speed", 50 }, { "melt_drift", 60 }, { "melt_smear", 0 }, { "melt_sag", 0 }, { "melt_mix", 100 } });
+        sp = spectrum (p.render (s1k), 24000);
+        const double total = bandEnergy (sp, sr, 20, 20000), core = bandEnergy (sp, sr, 985, 1015);
+        const double spread = 1.0 - core / total;
+        std::cout << "    MELT     energy moved off 1 kHz by pitch wobble: " << String (spread * 100.0, 1) << "%\n";
+        check (spread > 0.25, "melt modulates pitch");
+
+        // FORMANT: vowel A vs I on noise
+        auto nz = noise (sr, 3.0, 0.2f);
+        fxOnly (fx::Formant, { { "formant_vowel", 0 }, { "formant_shift", 50 }, { "formant_res", 60 }, { "formant_mod", 0 }, { "formant_move", 0 }, { "formant_amount", 100 } });
+        auto spA = spectrum (p.render (nz), 24000);
+        fxOnly (fx::Formant, { { "formant_vowel", 50 }, { "formant_shift", 50 }, { "formant_res", 60 }, { "formant_mod", 0 }, { "formant_move", 0 }, { "formant_amount", 100 } });
+        auto spI = spectrum (p.render (nz), 24000);
+        fxOnly (fx::Formant, { { "formant_vowel", 0 }, { "formant_shift", 100 }, { "formant_res", 60 }, { "formant_mod", 0 }, { "formant_move", 0 }, { "formant_amount", 100 } });
+        auto spAshift = spectrum (p.render (nz), 24000);
+        const double aF1 = dbRatio (bandEnergy (spA, sr, 700, 900), bandEnergy (spI, sr, 700, 900));
+        const double iF2 = dbRatio (bandEnergy (spI, sr, 2000, 2300), bandEnergy (spA, sr, 2000, 2300));
+        const double pkA = peakHz (spA, sr, 300, 1300), pkAs = peakHz (spAshift, sr, 300, 3000);
+        std::cout << "    FORMANT  'A' F1 band +" << String (aF1, 1) << " dB vs 'I'; 'I' F2 band +" << String (iF2, 1)
+                  << " dB vs 'A'; shift +12: F1 peak " << String (pkA, 0) << " -> " << String (pkAs, 0) << " Hz\n";
+        check (aF1 > 6.0 && iF2 > 6.0, "formant vowels put resonances in different places");
+        check (pkAs > pkA * 1.6, "formant shift moves the formants up");
+
+        // ROBOT on noise: harmonics of 100 Hz
+        const float vRobot = (float) (100.0 * std::log (100.0 / 40.0) / std::log (15.0));
+        fxOnly (fx::Robot, { { "robot_pitch", vRobot }, { "robot_robot", 100 }, { "robot_metal", 0 }, { "robot_ring", 0 }, { "robot_mix", 100 } });
+        sp = spectrum (p.render (nz), 24000);
+        double on = 0.0, off = 0.0;
+        for (int k = 3; k <= 20; ++k) { on += bandEnergy (sp, sr, k * 100.0 - 4, k * 100.0 + 4); off += bandEnergy (sp, sr, k * 100.0 + 46, k * 100.0 + 54); }
+        std::cout << "    ROBOT    noise -> 100 Hz harmonic series: on-harmonic vs between " << String (dbRatio (on, off), 1) << " dB\n";
+        check (dbRatio (on, off) > 10.0, "robot turns noise into a pitched buzz");
+
+        // SPECTRAL freeze sustains after the input stops
+        AudioBuffer<float> burst (2, (int) (sr * 4.0));
+        burst.clear();
+        for (int c = 0; c < 2; ++c) burst.copyFrom (c, 0, riff48, c, 0, (int) (sr * 2.0));
+        fxOnly (fx::Spectral, { { "spec_freeze", 100 }, { "spec_shift", 50 }, { "spec_stretch", 50 }, { "spec_blur", 0 }, { "spec_thin", 0 }, { "spec_mix", 100 } });
+        const float frozenTail = rmsDb (p.render (burst), (int) (sr * 2.6), (int) (sr * 1.0));
+        fxOnly (fx::Spectral, { { "spec_freeze", 0 }, { "spec_mix", 100 } });
+        const float liveTail = rmsDb (p.render (burst), (int) (sr * 2.6), (int) (sr * 1.0));
+        std::cout << "    SPECTRAL tail 0.6-1.6 s after the input stops: freeze 100 " << String (frozenTail, 1) << " dBFS, freeze 0 "
+                  << String (liveTail, 1) << " dBFS\n";
+        check (frozenTail > -45.0 && liveTail < -80.0, "spectral freeze holds the sound");
+
+        // REVERSE / GLITCH / GRANULAR scramble a rising chirp
+        auto ch = chirp (sr, 6.0, 1.5, 0.3f);
+        fxOnly (fx::Off, {});
+        const double dryDec = zcrDecreasingFraction (p.render (ch), (int) sr);
+        fxOnly (fx::Reverse, { { "rev_len", 40 }, { "rev_chance", 100 }, { "rev_fb", 0 }, { "rev_fade", 10 }, { "rev_speed", 50 }, { "rev_mix", 100 } });
+        auto revOut = p.render (ch);
+        const double revDec = zcrDecreasingFraction (revOut, (int) sr);
+        const double revInc = zcrIncreasingFraction (revOut, (int) sr);
+        fxOnly (fx::Glitch, { { "glitch_slice", 60 }, { "glitch_chaos", 100 }, { "glitch_repeat", 20 }, { "glitch_pitch", 0 }, { "glitch_chop", 0 }, { "glitch_mix", 100 } });
+        const double glDec = zcrDecreasingFraction (p.render (ch), (int) sr);
+        fxOnly (fx::Granular, { { "gran_size", 50 }, { "gran_density", 50 }, { "gran_pos", 50 }, { "gran_spray", 80 }, { "gran_pitch", 0 }, { "gran_mix", 100 } });
+        const double grDec = zcrDecreasingFraction (p.render (ch), (int) sr);
+        std::cout << "    TIME     rising chirp, share of steps where pitch goes DOWN: dry " << String (dryDec * 100, 0) << "%, reverse "
+                  << String (revDec * 100, 0) << "% (up " << String (revInc * 100, 0) << "%), glitch " << String (glDec * 100, 0) << "%, granular " << String (grDec * 100, 0) << "%\n";
+        check (dryDec < 0.05, "chirp test baseline");
+        check (revDec > 0.3 && revDec > revInc * 2.0, "reverse plays audio backwards (pitch mostly falls)");
+        check (glDec > 0.15, "glitch repeats / reverses slices");
+        check (grDec > 0.15, "granular scrambles time");
+
+        // VINYL crackle + age
+        auto quiet = sine (sr, 3.0, 440.0, 0.1f);
+        fxOnly (fx::Vinyl, { { "vinyl_wow", 0 }, { "vinyl_flutter", 0 }, { "vinyl_crackle", 100 }, { "vinyl_noise", 0 }, { "vinyl_age", 0 }, { "vinyl_mix", 100 } });
+        auto vo = p.render (quiet);
+        int clicks = 0;
         {
-            String line = "    " + (String (modeNames[m]) + (u ? "+UNH" : "")).paddedRight (' ', 12);
-            for (int d = 0; d <= 100; d += 10)
+            float prev = 0.0f;
+            for (int i = (int) sr; i < vo.getNumSamples(); ++i)
             {
-                p.setAll ((float) d, 50, 0, 100, 0, m, 0, u == 1); p.settle();
-                const float r = rmsDb (p.renderWarm (riff48));
-                check (std::abs (r - inRms) < levelTol, "drive sweep level held");
-                line << String (r, 1).paddedLeft (' ', 7);
+                const float hp = vo.getSample (0, i) - prev; prev = vo.getSample (0, i);
+                if (std::abs (hp) > 0.08f && std::abs (vo.getSample (0, i - 1) - vo.getSample (0, i - 2)) < 0.04f) ++clicks;
             }
-            std::cout << line << "\n";
         }
+        fxOnly (fx::Vinyl, { { "vinyl_crackle", 0 }, { "vinyl_age", 0 }, { "vinyl_mix", 100 } });
+        const double cYoung = centroid (spectrum (p.render (nz), 24000), sr);
+        fxOnly (fx::Vinyl, { { "vinyl_crackle", 0 }, { "vinyl_age", 100 }, { "vinyl_mix", 100 } });
+        const double cOld = centroid (spectrum (p.render (nz), 24000), sr);
+        std::cout << "    VINYL    crackle clicks in 2 s: " << clicks << " | age centroid " << String (cYoung, 0) << " -> " << String (cOld, 0) << " Hz\n";
+        check (clicks > 20, "vinyl crackle");
+        check (cOld < cYoung * 0.6, "vinyl age band-limits");
 
-    std::cout << "\n[1c] Worst case: drive 100, UNHINGED, tone 100, crush 100, alias 100 (RMS dBFS / peak dBFS)\n";
-    for (int m = 0; m < numModes; ++m)
-    {
-        p.setAll (100, 100, 100, 100, 0, m, 100, true); p.settle();
-        auto out = p.renderWarm (riff48);
-        const float r = rmsDb (out), pk = Decibels::gainToDecibels (out.getMagnitude (0, out.getNumSamples()));
-        std::cout << "    " << String (modeNames[m]).paddedRight (' ', 8) << String (r, 1).paddedLeft (' ', 7)
-                  << " / " << String (pk, 1) << "\n";
-        check (allFinite (out), "worst case finite");
-        check (std::abs (r - inRms) < levelTol + 1.0f, "worst case level held");
-        check (pk < 0.0f, "worst case peak below 0 dBFS");
+        // DESTROY / FUZZ harmonics
+        for (int e : { (int) fx::Destroy, (int) fx::Fuzz })
+        {
+            fxOnly (e, {});
+            sp = spectrum (p.render (s220), 24000);
+            const double thd = dbRatio (bandEnergy (sp, sr, 300, 20000), bandEnergy (sp, sr, 200, 240));
+            std::cout << "    " << String (fx::def (e).name).paddedRight (' ', 8) << " harmonics vs fundamental " << String (thd, 1) << " dB\n";
+            check (thd > -10.0, String (fx::def (e).name) + " generates strong harmonics");
+        }
     }
 
-    // ---- 2. Every control measurably works ----------------------------------
-    std::cout << "\n[2] Control checks\n";
+    // ---- 2. Every effect is different -----------------------------------------
+    std::cout << "\n[2] Distinctness: time-frequency fingerprint distance (mean |dB|) on the riff, effects at defaults\n";
+    std::vector<std::vector<float>> fps;
     {
-        // DRIVE: more drive -> more harmonics -> brighter (on a pure sine)
-        auto s = sine (48000.0, 2.0, 220.0, 0.3f);
-        double prev = 0.0;
-        String line = "    DRIVE  centroid (Hz) at 0/35/70/100:";
-        for (float d : { 0.0f, 35.0f, 70.0f, 100.0f })
+        p.apply ({}); p.settle();
+        const auto dryFp = fingerprint (p.renderWarm (riff48), sr, (int) sr);
+        float minPair = 1e9f; String minName;
+        for (int e = 1; e <= fx::numEffects; ++e)
         {
-            p.setAll (d, 100, 0, 100, 0, 1); p.settle();
-            const double c = centroid (p.render (s), 48000.0);
-            line << " " << String (c, 0);
-            check (c > prev, "drive increases harmonic content");
-            prev = c;
+            p.apply ({}); p.set ("slotA", (float) e); p.settle();
+            auto out = p.renderWarm (riff48);
+            fps.push_back (fingerprint (out, sr, (int) sr));
+            const float dd = fpDistance (fps.back(), dryFp);
+            std::cout << "    " << String (fx::def (e).name).paddedRight (' ', 11) << " vs dry " << String (dd, 1).paddedLeft (' ', 5)
+                      << " dB   level " << String (rmsDb (out), 1) << " dBFS (input " << String (inRms, 1) << ")\n";
+            check (dd > 2.0, String (fx::def (e).name) + " clearly changes the sound");
+            check (std::abs (rmsDb (out) - inRms) < 3.0f, String (fx::def (e).name) + " level held by auto gain");
+            check (allFinite (out) && peakDb (out) < 0.0f, String (fx::def (e).name) + " finite, below 0 dBFS");
         }
-        std::cout << line << "\n";
+        for (int a = 0; a < fx::numEffects; ++a)
+            for (int b = a + 1; b < fx::numEffects; ++b)
+            {
+                const float d = fpDistance (fps[(size_t) a], fps[(size_t) b]);
+                if (d < minPair) { minPair = d; minName = String (fx::def (a + 1).name) + " / " + fx::def (b + 1).name; }
+                check (d > 2.0f, "effects differ: " + String (fx::def (a + 1).name) + " vs " + fx::def (b + 1).name);
+            }
+        std::cout << "    closest pair: " << minName << " at " << String (minPair, 1) << " dB (all 91 pairs checked)\n";
+    }
 
-        // TONE: brighter as it goes up
-        prev = 0.0; line = "    TONE   centroid (Hz) at 0/25/50/75/100:";
-        for (float t : { 0.0f, 25.0f, 50.0f, 75.0f, 100.0f })
+    // ---- 3. Effect mix 0 is transparent ----------------------------------------
+    std::cout << "\n[3] Each effect's own Mix/Blend at 0 leaves the signal untouched\n";
+    {
+        p.apply ({}); p.settle(); p.inst->reset();
+        const auto ref = p.render (riff48);
+        float worst = -300.0f;
+        for (int e = 1; e <= fx::numEffects; ++e)
         {
-            p.setAll (70, t, 0, 100, 0, 0); p.settle();
-            const double c = centroid (p.render (riff48), 48000.0);
-            line << " " << String (c, 0);
-            check (c > prev, "tone increases brightness");
-            prev = c;
-        }
-        std::cout << line << "\n";
-
-        // CRUSH: changes the signal, more crush = more difference
-        p.setAll (35, 50, 0, 100, 0, 0); p.settle();
-        auto ref = p.render (riff48);
-        prev = -999.0; line = "    CRUSH  difference vs crush 0 (dB) at 10/50/100:";
-        for (float c : { 10.0f, 50.0f, 100.0f })
-        {
-            p.setAll (35, 50, c, 100, 0, 0); p.settle();
+            p.apply ({}); p.set ("slotA", (float) e); p.set (fx::paramId (e, 5), 0.0f); p.settle(); p.inst->reset();
             auto out = p.render (riff48);
-            out.addFrom (0, 0, ref, 0, 0, ref.getNumSamples(), -1.0f);
-            out.addFrom (1, 0, ref, 1, 0, ref.getNumSamples(), -1.0f);
-            const double d = rmsDb (out);
-            line << " " << String (d, 1);
-            check (d > prev, "crush increases digital distortion");
-            prev = d;
+            for (int c = 0; c < 2; ++c) out.addFrom (c, 0, ref, c, 0, ref.getNumSamples(), -1.0f);
+            const float d = peakDb (out);
+            worst = jmax (worst, d);
+            check (d < -60.0f, String (fx::def (e).name) + " mix 0 is transparent");
         }
-        std::cout << line << "\n";
+        std::cout << "    worst difference: " << String (worst, 1) << " dBFS\n";
+    }
 
-        // MIX = 0 must be a perfect, latency-aligned dry signal
-        p.setAll (100, 50, 100, 0, 0, 3); p.settle();
+    // ---- 4. Presets -------------------------------------------------------------
+    std::cout << "\n[4] Factory presets: recall, level, distinctness\n";
+    {
+        const auto& fps2 = naji::factoryPresets();
+        std::set<std::pair<int, int>> combos;
+        std::vector<std::vector<float>> pf;
+        // A host does not resend the program that is already selected, so start from another one.
+        p.inst->setCurrentProgram (1); p.settle (0.05);
+        for (int i = 0; i < (int) fps2.size(); ++i)
+        {
+            p.inst->setCurrentProgram (i);
+            p.settle (0.05);
+            MessageManager::getInstance()->runDispatchLoopUntil (20);
+            // Expected normalised value of every parameter
+            int wrong = 0;
+            for (auto& [id, lp] : p.local)
+            {
+                float expect = lp->getDefaultValue();
+                for (auto& [vid, v] : fps2[(size_t) i].values) if (id == vid) expect = lp->convertTo0to1 (v);
+                if (std::abs (p.h (id)->getValue() - expect) > 2.0e-3f) { ++wrong; if (wrong < 4) std::cout << "      " << id << " = " << p.h (id)->getValue() << " expected " << expect << "\n"; }
+            }
+            check (wrong == 0, String ("preset recalls every parameter: ") + fps2[(size_t) i].name);
+
+            int sa = 0, sb = 0;
+            for (auto& [vid, v] : fps2[(size_t) i].values) { if (String (vid) == "slotA") sa = (int) v; if (String (vid) == "slotB") sb = (int) v; }
+            combos.insert ({ sa, sb });
+
+            auto out = p.renderWarm (riff48);
+            pf.push_back (fingerprint (out, sr, (int) sr));
+            const float r = rmsDb (out), pk = peakDb (out);
+            std::cout << "    " << String (i + 1).paddedLeft (' ', 2) << " " << String (fps2[(size_t) i].name).paddedRight (' ', 34)
+                      << fx::effectName (sa).paddedRight (' ', 11) << "-> " << fx::effectName (sb).paddedRight (' ', 11)
+                      << " RMS " << String (r, 1) << "  peak " << String (pk, 1) << "  recall " << (wrong == 0 ? "ok" : "WRONG") << "\n";
+            check (allFinite (out) && pk < 0.0f, "preset output finite and below 0 dBFS");
+            check (std::abs (r - inRms) < 3.0f, "preset level held");
+        }
+        check (combos.size() == fps2.size(), "every preset uses a different effect combination");
+        float minPair = 1e9f; String minName;
+        for (size_t a = 0; a < pf.size(); ++a)
+            for (size_t b = a + 1; b < pf.size(); ++b)
+            {
+                const float d = fpDistance (pf[a], pf[b]);
+                if (d < minPair) { minPair = d; minName = String (fps2[a].name) + " / " + fps2[b].name; }
+                check (d > 2.0f, "presets differ: " + String (fps2[a].name) + " vs " + fps2[b].name);
+            }
+        std::cout << "    " << combos.size() << " distinct slot combinations; closest presets: " << minName << " at " << String (minPair, 1) << " dB (153 pairs)\n";
+    }
+
+    // ---- 5. Click tests -----------------------------------------------------------
+    std::cout << "\n[5] Click test (110 Hz sine; clicks are broadband, so the output is high-passed at 6 kHz;\n"
+              << "    ratio = biggest HF spike in the 200 ms after the change / biggest steady HF spike (floor -60 dBFS), <= 1.5 passes)\n";
+    {
+        struct Jump { String name; std::function<void()> before, after; };
+        std::vector<Jump> jumps;
+        auto slotJump = [&] (int a, int b)
+        {
+            jumps.push_back ({ "Slot A " + fx::effectName (a) + " -> " + fx::effectName (b),
+                               [&p, a] { p.apply ({ { "drive", 40 } }); p.set ("slotA", (float) a); },
+                               [&p, b] { p.set ("slotA", (float) b); } });
+        };
+        int prev = 0;
+        for (int e = 1; e <= fx::numEffects; ++e) { slotJump (prev, e); prev = e; }
+        slotJump (prev, 0);
+        jumps.push_back ({ "Slot B Off -> Formant", [&p] { p.apply ({ { "drive", 40 } }); }, [&p] { p.set ("slotB", (float) fx::Formant); } });
+        jumps.push_back ({ "Drive 0 -> 100",   [&p] { p.apply ({ { "drive", 0 }, { "type", 1 } }); },  [&p] { p.set ("drive", 100); } });
+        jumps.push_back ({ "Type Soft -> Fold", [&p] { p.apply ({ { "drive", 60 } }); },               [&p] { p.set ("type", 3); } });
+        jumps.push_back ({ "Unhinged on",      [&p] { p.apply ({ { "drive", 60 } }); },                [&p] { p.set ("unhinged", 1); } });
+        jumps.push_back ({ "Mix 0 -> 100",     [&p] { p.apply ({ { "drive", 80 }, { "mix", 0 } }); },  [&p] { p.set ("mix", 100); } });
+        jumps.push_back ({ "Output -24 -> +12",[&p] { p.apply ({ { "output", -24 } }); },              [&p] { p.set ("output", 12); } });
+        jumps.push_back ({ "Width 0 -> 200",   [&p] { p.apply ({ { "width", 0 } }); },                 [&p] { p.set ("width", 200); } });
+        jumps.push_back ({ "Comb 0 -> 100",    [&p] { p.apply ({}); },                                 [&p] { p.set ("comb", 100); } });
+        jumps.push_back ({ "Gate 0 -> 100",    [&p] { p.apply ({}); },                                 [&p] { p.set ("gate", 100); } });
+        jumps.push_back ({ "Crush 0 -> 100",   [&p] { p.apply ({}); },                                 [&p] { p.set ("crush", 100); } });
+        jumps.push_back ({ "Formant vowel A->U", [&p] { p.apply ({ { "slotA", 4 } }); },               [&p] { p.set ("formant_vowel", 100); } });
+
+        auto sig = sine (sr, 2.0, 110.0, 0.25f);
+        const int bs = 256, changeBlock = (int) sr / bs, changeAt = changeBlock * bs;
+        for (auto& j : jumps)
+        {
+            j.before(); p.settle (0.2);
+            p.render (sig, {}, bs);   // warm up on the same signal so auto gain has settled
+            auto out = p.render (sig, [&] (int bi) { if (bi == changeBlock) j.after(); }, bs);
+            auto hf = highPassed (out, sr, 6000.0);
+            const float steadyBefore = maxAbs (hf, changeAt - (int) (0.4 * sr), changeAt);
+            const float steadyAfter  = maxAbs (hf, out.getNumSamples() - (int) (0.4 * sr), out.getNumSamples());
+            const float during       = maxAbs (hf, changeAt, changeAt + (int) (0.2 * sr));
+            const float floorLevel   = 1.0e-3f;   // -60 dBFS: HF this far under a -12 dBFS tone is not audible
+            const float ratio = jmax (during, floorLevel) / jmax (floorLevel, jmax (steadyBefore, steadyAfter));
+            std::cout << "    " << j.name.paddedRight (' ', 32) << " ratio " << String (ratio, 3)
+                      << "  (HF peak during " << String (Decibels::gainToDecibels (during, -120.0f), 1) << " dB, steady "
+                      << String (Decibels::gainToDecibels (jmax (steadyBefore, steadyAfter), -120.0f), 1) << " dB)"
+                      << (ratio <= 1.5f ? "  ok" : "  CLICK") << "\n";
+            check (allFinite (out), "finite during " + j.name);
+            check (ratio <= 1.5f, "no click: " + j.name);
+        }
+    }
+
+    // ---- 6. Dry paths --------------------------------------------------------------
+    std::cout << "\n[6] MIX 0 and host bypass\n";
+    {
+        p.inst->setCurrentProgram (12); p.set ("mix", 0); p.settle();
         auto out = p.render (riff48);
         float maxErr = 0.0f;
         for (int c = 0; c < 2; ++c)
             for (int i = latency; i < riff48.getNumSamples(); ++i)
                 maxErr = jmax (maxErr, std::abs (out.getSample (c, i) - riff48.getSample (c, i - latency)));
-        std::cout << "    MIX    0% vs dry input (latency aligned) max error: " << Decibels::gainToDecibels (maxErr, -200.0f) << " dB\n";
+        std::cout << "    MIX 0 vs dry (latency aligned): " << Decibels::gainToDecibels (maxErr, -200.0f) << " dB\n";
         check (maxErr < 1.0e-5f, "mix 0 is sample-exact dry");
 
-        // MIX = 50 lands between dry and wet
-        p.setAll (70, 50, 0, 50, 0, 1); p.settle();
-        const float half = rmsDb (p.render (riff48));
-        std::cout << "    MIX    50% RMS " << String (half, 1) << " dBFS\n";
-        check (std::isfinite (half), "mix 50 works");
-
-        // OUTPUT: exact dB
-        p.setAll (50, 50, 0, 100, 0, 0); p.settle();
-        const float at0 = rmsDb (p.renderWarm (riff48));
-        for (float o : { -24.0f, -6.0f, 6.0f, 12.0f })
+        if (auto* bp = p.inst->getBypassParameter())
         {
-            p.setAll (50, 50, 0, 100, o, 0); p.settle();
-            const float delta = rmsDb (p.renderWarm (riff48)) - at0;
-            std::cout << "    OUTPUT " << String (o, 0) << " dB -> measured " << String (delta, 2) << " dB\n";
-            check (std::abs (delta - o) < 0.05f, "output gain accurate");
+            p.set ("mix", 100);
+            bp->setValue (1.0f); p.settle();
+            out = p.render (riff48);
+            maxErr = 0.0f;
+            for (int i = latency; i < riff48.getNumSamples(); ++i)
+                maxErr = jmax (maxErr, std::abs (out.getSample (0, i) - riff48.getSample (0, i - latency)));
+            std::cout << "    bypass vs dry: " << Decibels::gainToDecibels (maxErr, -200.0f) << " dB\n";
+            check (maxErr < 1.0e-5f, "bypass is clean and aligned");
+            bp->setValue (0.0f); p.settle();
         }
-
-        // TYPE: all modes sound different from each other
-        std::vector<AudioBuffer<float>> outs;
-        for (int m = 0; m < numModes; ++m) { p.setAll (60, 50, 0, 100, 0, m); p.settle(); outs.push_back (p.render (riff48)); }
-        for (int a = 0; a < numModes; ++a)
-            for (int b = a + 1; b < numModes; ++b)
-            {
-                auto d = outs[(size_t) a];
-                d.addFrom (0, 0, outs[(size_t) b], 0, 0, d.getNumSamples(), -1.0f);
-                check (rmsDb (d) > rmsDb (outs[(size_t) a]) - 20.0f,
-                       String ("modes differ: ") + modeNames[a] + " vs " + modeNames[b]);
-            }
-        std::cout << "    TYPE   all 8 modes produce distinct output\n";
-
-        // UNHINGED: more harmonics than the same setting without it
-        {
-            auto sn = sine (48000.0, 2.0, 220.0, 0.3f);
-            p.setAll (60, 100, 0, 100, 0, 0); p.settle();
-            const double off = centroid (p.render (sn), 48000.0);
-            p.setAll (60, 100, 0, 100, 0, 0, 0, true); p.settle();
-            const double on = centroid (p.render (sn), 48000.0);
-            std::cout << "    UNHINGED centroid (Hz) off/on: " << String (off, 0) << " " << String (on, 0) << "\n";
-            check (on > off * 1.2, "unhinged adds distortion");
-        }
-
-        // ALIAS: energy off the harmonic series rises with the knob
-        {
-            auto sn = sine (48000.0, 1.5, 4987.0, 0.5f);
-            String l = "    ALIAS  inharmonic energy (dB) at 0/25/50/100:";
-            double prevA = -999.0, a0 = 0.0, a100 = 0.0;
-            for (float a : { 0.0f, 25.0f, 50.0f, 100.0f })
-            {
-                p.setAll (60, 100, 0, 100, 0, 1, a); p.settle();
-                const double r = aliasRatioDb (p.render (sn), 48000.0, 4987.0);
-                l << " " << String (r, 1);
-                check (r > prevA, "alias increases aliasing");
-                if (a == 0.0f) a0 = r;
-                if (a == 100.0f) a100 = r;
-                prevA = r;
-            }
-            std::cout << l << "\n";
-            check (a100 - a0 > 20.0, "alias at 100 is at least 20 dB more aliased");
-        }
+        else check (false, "bypass parameter present");
     }
 
-    // ---- 3. Click test: jump parameters at block boundaries ------------------
-    std::cout << "\n[3] Click test (110 Hz sine, abrupt automation jumps; ratio = worst step during change / worst steady step, <= 1.25 passes)\n";
+    // ---- 7. Sample rates / block sizes ------------------------------------------------
+    std::cout << "\n[7] Sample rates and block sizes\n";
+    for (double rate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
     {
-        struct Jump { String name; std::function<void()> before, after; };
-        auto base = [&p] (float d, float t, float c, float mx, float o, int ty) { return [=, &p] { p.setAll (d, t, c, mx, o, ty); }; };
-        std::vector<Jump> jumps = {
-            { "Drive 0 -> 100",     base (0, 50, 0, 100, 0, 1),   base (100, 50, 0, 100, 0, 1) },
-            { "Drive 100 -> 0",     base (100, 50, 0, 100, 0, 0), base (0, 50, 0, 100, 0, 0) },
-            { "Tone 0 -> 100",      base (60, 0, 0, 100, 0, 0),   base (60, 100, 0, 100, 0, 0) },
-            { "Crush 0 -> 100",     base (40, 50, 0, 100, 0, 0),  base (40, 50, 100, 100, 0, 0) },
-            { "Mix 0 -> 100",       base (80, 50, 0, 0, 0, 1),    base (80, 50, 0, 100, 0, 1) },
-            { "Output -24 -> +12",  base (40, 50, 0, 100, -24, 0),base (40, 50, 0, 100, 12, 0) },
-            { "Type Soft -> Hard",  base (60, 50, 0, 100, 0, 0),  base (60, 50, 0, 100, 0, 1) },
-            { "Type Hard -> Fuzz",  base (60, 50, 0, 100, 0, 1),  base (60, 50, 0, 100, 0, 2) },
-            { "Type Fuzz -> Digital", base (60, 50, 0, 100, 0, 2), base (60, 50, 0, 100, 0, 3) },
-            { "Type Digital -> Soft", base (60, 50, 0, 100, 0, 3), base (60, 50, 0, 100, 0, 0) },
-            { "Type Soft -> Octave",  base (60, 50, 0, 100, 0, 0), base (60, 50, 0, 100, 0, 4) },
-            { "Type Octave -> Melt",  base (60, 50, 0, 100, 0, 4), base (60, 50, 0, 100, 0, 5) },
-            { "Type Melt -> Glitch",  base (60, 50, 0, 100, 0, 5), base (60, 50, 0, 100, 0, 6) },
-            { "Type Glitch -> Nuke",  base (60, 50, 0, 100, 0, 6), base (60, 50, 0, 100, 0, 7) },
-            { "Type Nuke -> Soft",    base (60, 50, 0, 100, 0, 7), base (60, 50, 0, 100, 0, 0) },
-            { "Alias 0 -> 100",       [&p] { p.setAll (60, 50, 0, 100, 0, 1, 0); },  [&p] { p.setAll (60, 50, 0, 100, 0, 1, 100); } },
-            { "Unhinged off -> on",   [&p] { p.setAll (60, 50, 0, 100, 0, 0, 0, false); }, [&p] { p.setAll (60, 50, 0, 100, 0, 0, 0, true); } },
-            { "Unhinged on -> off",   [&p] { p.setAll (60, 50, 0, 100, 0, 0, 0, true); },  [&p] { p.setAll (60, 50, 0, 100, 0, 0, 0, false); } },
-        };
-
-        const double sr = 48000.0;
-        auto sig = sine (sr, 2.0, 110.0, 0.25f);
-        const int bs = 256, changeBlock = (int) (sr * 1.0) / bs;
-        const int changeAt = changeBlock * bs;
-
-        for (auto& j : jumps)
-        {
-            j.before(); p.settle (0.5);
-            auto out = p.render (sig, [&] (int bi) { if (bi == changeBlock) j.after(); }, bs);
-            const float steadyBefore = maxStep (out, changeAt - (int) (0.4 * sr), changeAt);
-            const float steadyAfter  = maxStep (out, out.getNumSamples() - (int) (0.4 * sr), out.getNumSamples());
-            const float during       = maxStep (out, changeAt, changeAt + (int) (0.2 * sr));
-            const float ratio = during / jmax (1.0e-9f, jmax (steadyBefore, steadyAfter));
-            std::cout << "    " << j.name.paddedRight (' ', 22) << " ratio " << String (ratio, 3)
-                      << (ratio <= 1.25f ? "  ok" : "  CLICK") << "\n";
-            check (ratio <= 1.25f, "no click: " + j.name);
-        }
-    }
-
-    // ---- 4. Host bypass is latency compensated -------------------------------
-    std::cout << "\n[4] Bypass\n";
-    if (auto* bp = p.inst->getBypassParameter())
-    {
-        p.setAll (100, 50, 0, 100, 0, 2);
-        bp->setValue (1.0f); p.settle();
-        auto out = p.render (riff48);
-        float maxErr = 0.0f;
-        for (int i = latency; i < riff48.getNumSamples(); ++i)
-            maxErr = jmax (maxErr, std::abs (out.getSample (0, i) - riff48.getSample (0, i - latency)));
-        std::cout << "    bypassed vs dry (latency aligned) max error: " << Decibels::gainToDecibels (maxErr, -200.0f) << " dB\n";
-        check (maxErr < 1.0e-5f, "bypass is clean and aligned");
-        bp->setValue (0.0f); p.settle();
-    }
-    else check (false, "bypass parameter present");
-
-    // ---- 5. Sample rates and block sizes ------------------------------------
-    std::cout << "\n[5] Sample rates / block sizes\n";
-    for (double sr : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
-    {
-        p.prepare (sr, 512);
-        auto in = riff (sr, 3.0);
+        p.prepare (rate, 512);
+        auto in = riff (rate, 3.0);
         bool ok = true;
-        for (int m = 0; m < numModes; ++m)
-            for (int u = 0; u < 2; ++u)
-            {
-                p.setAll (100, 100, 60, 100, 0, m, u ? 80.0f : 0.0f, u == 1); p.settle();
-                auto out = p.render (in);
-                ok = ok && allFinite (out) && out.getMagnitude (0, out.getNumSamples()) < 1.0f;
-            }
-        // tiny, odd and random block sizes must give identical output
-        p.setAll (70, 60, 30, 80, -2, 7, 40, true); p.settle();
-        p.inst->reset();
-        auto a = p.render (in, {}, 512);
-        p.inst->reset();
-        auto b = p.render (in, {}, 0);
-        p.inst->reset();
-        auto c = p.render (in, {}, 1);
-        float diff = 0.0f;
-        for (int i = 0; i < a.getNumSamples(); ++i)
-            diff = jmax (diff, std::abs (a.getSample (0, i) - b.getSample (0, i)), std::abs (a.getSample (0, i) - c.getSample (0, i)));
-        std::cout << "    " << String (sr, 0).paddedLeft (' ', 6) << " Hz  latency " << p.inst->getLatencySamples()
-                  << "  all modes finite: " << (ok ? "yes" : "NO")
-                  << "  block-size independence max diff: " << Decibels::gainToDecibels (diff, -200.0f) << " dB\n";
-        check (ok, "sample rate " + String (sr));
-        check (diff < 1.0e-4f, "block size independence at " + String (sr));
-    }
-
-    // ---- 6. Aliasing ---------------------------------------------------------
-    std::cout << "\n[6] Aliasing with ALIAS at 0 (4987 Hz sine, energy off the harmonic series vs on it; lower is cleaner)\n";
-    p.prepare (48000.0, 512);
-    {
-        auto s = sine (48000.0, 1.5, 4987.0, 0.5f);
-        for (int m = 0; m < numModes; ++m)
+        for (int e = 1; e <= fx::numEffects; ++e)
         {
-            p.setAll (70, 100, 0, 100, 0, m); p.settle();
-            std::cout << "    " << String (modeNames[m]).paddedRight (' ', 8) << " drive 70: "
-                      << String (aliasRatioDb (p.render (s), 48000.0, 4987.0), 1) << " dB\n";
+            p.apply ({ { "drive", 60 } }); p.set ("slotA", (float) e); p.set ("slotB", (float) (e % fx::numEffects + 1)); p.settle (0.1);
+            auto out = p.render (in);
+            const bool good = allFinite (out) && peakDb (out) < 0.0f;
+            if (! good) std::cout << "      problem with " << fx::def (e).name << " at " << rate << "\n";
+            ok = ok && good;
         }
+        float diff = 0.0f;
+        for (int preset : { 0, 3, 11, 12 })
+        {
+            p.inst->setCurrentProgram (preset); p.settle (0.1);
+            p.inst->reset(); auto a = p.render (in, {}, 512);
+            p.inst->reset(); auto b = p.render (in, {}, 0);
+            p.inst->reset(); auto c = p.render (in, {}, 37);
+            for (int i = 0; i < a.getNumSamples(); ++i)
+                diff = jmax (diff, std::abs (a.getSample (0, i) - b.getSample (0, i)), std::abs (a.getSample (0, i) - c.getSample (0, i)));
+        }
+        std::cout << "    " << String (rate, 0).paddedLeft (' ', 6) << " Hz  latency " << p.inst->getLatencySamples()
+                  << "  all effects (both slots) finite and < 0 dBFS: " << (ok ? "yes" : "NO")
+                  << "  block-size independence: " << Decibels::gainToDecibels (diff, -200.0f) << " dB\n";
+        check (ok, "all effects work at " + String (rate));
+        check (diff < 1.0e-4f, "block size independence at " + String (rate));
     }
+    p.prepare (48000.0, 512);
 
-    // ---- 7. State save / restore ---------------------------------------------
-    std::cout << "\n[7] State\n";
+    // ---- 8. State --------------------------------------------------------------------
+    std::cout << "\n[8] State save / restore\n";
     {
-        p.setAll (77, 23, 41, 66, -5, 2, 12, true); p.settle (0.05);
+        Random r (99);
+        std::map<String, float> setTo;
+        for (auto& [id, lp] : p.local)
+        {
+            float v = r.nextFloat();
+            if (lp->isDiscrete()) { const int steps = jmax (2, lp->getNumSteps()); v = (float) roundToInt (v * (float) (steps - 1)) / (float) (steps - 1); }
+            p.h (id)->setValue (v);
+            setTo[id] = p.h (id)->getValue();
+        }
+        p.settle (0.05);
         MemoryBlock mb;
         p.inst->getStateInformation (mb);
-        p.setAll (0, 0, 0, 0, 0, 0); p.settle (0.05);
+        p.inst->setCurrentProgram (5); p.settle (0.05);
         p.inst->setStateInformation (mb.getData(), (int) mb.getSize());
         p.settle (0.05);
-        const String got = p.params["Drive"]->getCurrentValueAsText() + " " + p.params["Tone"]->getCurrentValueAsText()
-                         + " " + p.params["Crush"]->getCurrentValueAsText() + " " + p.params["Mix"]->getCurrentValueAsText()
-                         + " " + p.params["Output"]->getCurrentValueAsText() + " " + p.params["Type"]->getCurrentValueAsText()
-                         + " " + p.params["Alias"]->getCurrentValueAsText() + " " + p.params["Unhinged"]->getCurrentValueAsText();
-        std::cout << "    restored: " << got << "\n";
-        check (got == "77% 23% 41% 66% -5.0 dB Fuzz 12% On", "state restored");
+        MessageManager::getInstance()->runDispatchLoopUntil (20);
+        int wrong = 0;
+        for (auto& [id, v] : setTo) if (std::abs (p.h (id)->getValue() - v) > 1.0e-3f) ++wrong;
+        std::cout << "    " << setTo.size() << " random values, " << wrong << " not restored\n";
+        check (wrong == 0, "state restored exactly");
     }
 
-    // ---- 8. CPU --------------------------------------------------------------
-    std::cout << "\n[8] CPU (stereo, 512-sample blocks, % of one core in real time)\n";
-    for (double sr : { 48000.0, 96000.0 })
+    // ---- 9. User preset save / load (in-process preset manager) ----------------------
+    std::cout << "\n[9] User preset save / load\n";
     {
-        p.prepare (sr, 512);
-        auto in = riff (sr, 10.0);
-        String line = "    " + String (sr / 1000.0, 0) + " kHz:";
-        for (int m = 0; m < numModes; ++m)
+        NajiDistortionProcessor proc;
+        proc.presets.loadFactory (9);
+        proc.apvts.getParameter ("gran_size")->setValueNotifyingHost (0.123f);
+        proc.apvts.getParameter ("drive")->setValueNotifyingHost (0.777f);
+        std::map<String, float> before;
+        for (auto* prm : proc.getParameters()) if (auto* rp = dynamic_cast<RangedAudioParameter*> (prm)) before[rp->getParameterID()] = rp->getValue();
+        const File f = outDir.getChildFile ("test_user_preset.najipreset");
+        const bool saved = proc.presets.saveToFile (f, "My Test Preset", "User");
+        proc.presets.loadFactory (0);
+        const bool loaded = proc.presets.loadFile (f);
+        int wrong = 0;
+        for (auto* prm : proc.getParameters())
+            if (auto* rp = dynamic_cast<RangedAudioParameter*> (prm))
+                if (std::abs (rp->getValue() - before[rp->getParameterID()]) > 1.0e-3f) ++wrong;
+        std::cout << "    saved " << (saved ? "yes" : "no") << ", loaded " << (loaded ? "yes" : "no") << ", name '"
+                  << proc.presets.getCurrentName() << "', " << wrong << " parameters differ\n";
+        check (saved && loaded && wrong == 0 && proc.presets.getCurrentName() == "My Test Preset", "user preset round trip");
+        f.deleteFile();
+    }
+
+    // ---- 10. CPU -----------------------------------------------------------------------
+    std::cout << "\n[10] CPU (% of one core, stereo, 512-sample blocks, effect in slot A, drive 50)\n";
+    for (double rate : { 48000.0, 96000.0 })
+    {
+        p.prepare (rate, 512);
+        auto in = riff (rate, 5.0);
+        String line = "    " + String (rate / 1000.0, 0) + " kHz:";
+        double worst = 0.0;
+        for (int e = 1; e <= fx::numEffects; ++e)
         {
-            p.setAll (100, 50, 50, 100, 0, m, 50, true); p.settle();
+            p.apply ({ { "drive", 50 } }); p.set ("slotA", (float) e); p.settle (0.1);
             const auto t0 = Time::getHighResolutionTicks();
             p.render (in);
-            const double secs = Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t0);
-            line << "  " << modeNames[m] << " " << String (100.0 * secs / 10.0, 2) << "%";
+            const double pct = 100.0 * Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t0) / 5.0;
+            worst = jmax (worst, pct);
+            line << " " << String (fx::def (e).name).substring (0, 5) << " " << String (pct, 1);
         }
-        line << "   (worst case: unhinged + alias 50)";
         std::cout << line << "\n";
-    }
-
-    // ---- 9. Demo renders -----------------------------------------------------
-    std::cout << "\n[9] Rendering demo WAVs\n";
-    {
-        p.prepare (48000.0, 512);
-        auto in = riff (48000.0, 8.0);
-        writeWav (in, 48000.0, outDir.getChildFile ("00_clean_input.wav"));
-        struct Demo { const char* file; float d, t, c, mx, o; int m; float a; bool u; };
-        for (auto& d : { Demo { "01_soft_warm.wav",        20, 55, 0,  100, 0, 0, 0, false },
-                         Demo { "02_soft_driven.wav",      65, 50, 0,  100, 0, 0, 0, false },
-                         Demo { "03_hard_aggressive.wav",  75, 60, 0,  100, 0, 1, 0, false },
-                         Demo { "04_fuzz_maxed.wav",       100, 45, 0, 100, 0, 2, 0, false },
-                         Demo { "05_digital_folded.wav",   70, 55, 0,  100, 0, 3, 0, false },
-                         Demo { "06_ridiculous.wav",       100, 70, 70, 100, 0, 3, 0, false },
-                         Demo { "07_hard_crush_mix50.wav", 90, 50, 45, 50,  0, 1, 0, false },
-                         Demo { "08_octave.wav",           70, 60, 0,  100, 0, 4, 0, false },
-                         Demo { "09_melt.wav",             85, 55, 0,  100, 0, 5, 0, false },
-                         Demo { "10_glitch.wav",           70, 60, 0,  100, 0, 6, 0, false },
-                         Demo { "11_nuke_unhinged.wav",    100, 65, 30, 100, 0, 7, 0, true },
-                         Demo { "12_alias_hard.wav",       70, 70, 0,  100, 0, 1, 60, false },
-                         Demo { "13_everything_maxed.wav", 100, 100, 100, 100, 0, 7, 100, true } })
+        double worstPreset = 0.0; String worstName;
+        for (int i = 0; i < 18; ++i)
         {
-            p.setAll (d.d, d.t, d.c, d.mx, d.o, d.m, d.a, d.u); p.settle();
-            p.render (in);   // let the auto gain lock on
-            writeWav (p.render (in), 48000.0, outDir.getChildFile (d.file));
-            std::cout << "    " << d.file << "\n";
+            p.inst->setCurrentProgram (i); p.settle (0.1);
+            const auto t0 = Time::getHighResolutionTicks();
+            p.render (in);
+            const double pct = 100.0 * Time::highResolutionTicksToSeconds (Time::getHighResolutionTicks() - t0) / 5.0;
+            if (pct > worstPreset) { worstPreset = pct; worstName = naji::factoryPresets()[(size_t) i].name; }
         }
+        std::cout << "      heaviest preset: " << worstName << " " << String (worstPreset, 1) << "%\n";
+        check (worstPreset < 60.0, "CPU reasonable");
+    }
+    p.prepare (48000.0, 512);
+
+    // ---- 11. Demo renders ------------------------------------------------------------------
+    std::cout << "\n[11] Rendering one demo WAV per preset\n";
+    {
+        auto in = riff (sr, 8.0);
+        writeWav (in, sr, outDir.getChildFile ("00_clean_input.wav"));
+        for (int i = 0; i < 18; ++i)
+        {
+            p.inst->setCurrentProgram (i); p.settle();
+            p.render (in);
+            const String name = String (i + 1).paddedLeft ('0', 2) + "_" + File::createLegalFileName (naji::factoryPresets()[(size_t) i].name).replaceCharacter (' ', '_') + ".wav";
+            writeWav (p.render (in), sr, outDir.getChildFile (name));
+        }
+        std::cout << "    18 files written\n";
     }
 
-    // ---- 10. Editor snapshots -------------------------------------------------
-    std::cout << "\n[10] Editor snapshots\n";
-    snapshotEditor (outDir.getChildFile ("editor_default.png"), {});
-    snapshotEditor (outDir.getChildFile ("editor_pushed.png"), [] (NajiDistortionProcessor& proc)
-    {
-        auto set = [&] (const char* id, float plain)
-        {
-            auto* prm = proc.apvts.getParameter (id);
-            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
-        };
-        set (ParamIDs::drive, 88); set (ParamIDs::tone, 62); set (ParamIDs::crush, 30);
-        set (ParamIDs::mix, 85); set (ParamIDs::output, -4.5f); set (ParamIDs::type, 2);
-        set (ParamIDs::alias, 35);
-    });
-    snapshotEditor (outDir.getChildFile ("editor_unhinged.png"), [] (NajiDistortionProcessor& proc)
-    {
-        auto set = [&] (const char* id, float plain)
-        {
-            auto* prm = proc.apvts.getParameter (id);
-            prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
-        };
-        set (ParamIDs::drive, 100); set (ParamIDs::tone, 70); set (ParamIDs::crush, 20);
-        set (ParamIDs::alias, 60); set (ParamIDs::type, 7); set (ParamIDs::unhinged, 1);
-        proc.outputLevel = 0.8f;
-    });
-    std::cout << "    editor_default.png, editor_pushed.png, editor_unhinged.png\n";
+    // ---- 12. Editor -------------------------------------------------------------------------
+    std::cout << "\n[12] Editor\n";
+    editorSnapshots (outDir);
 
     p.inst->releaseResources();
     p.inst.reset();
